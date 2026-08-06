@@ -394,6 +394,8 @@ The wait is measured from the **end** of a write, so an edit that spent a second
 
 **It is pinned while it is live**, so a room that is talking can reach it from the pin list rather than scrolling for it. Deleting a message takes it off that list by itself, so taking the feed down needs no second call and never leaves a channel's fifty pins one short. Discord's own `pinned a message to this channel` notice stays in the history; that is the cosmetic cost of the pin.
 
+**The pin is the only part that needs a permission.** Posting needs Send Messages; editing and deleting a message the bot wrote itself are ungoverned, which is also why the restart sweep only ever takes down blocks of its own. Pinning needs **Pin Messages**, which Manage Messages does **not** carry — Discord split the two apart, so a bot trusted to delete anybody's message in a channel can still be refused a pin on its own. Without it the feed works unpinned and says so once per session in the log.
+
 **It comes down when the room does.** The message is deleted as the session seals — before the summary that replaces it has even been asked for, since a feed taken down at the end would spend the length of a summary showing the last thing somebody said on their way out as though it were current. The next session posts a new one. What the evening leaves behind is the summary.
 
 Two things are worth knowing before you turn it on:

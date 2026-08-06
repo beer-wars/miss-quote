@@ -24,6 +24,14 @@ on the way past never gets there. See `_swept`.
 This bot pins nothing else. If it ever does, `_swept` is the line that has to
 learn the difference.
 
+**Only the pin needs a permission.** Posting needs Send Messages, and everything
+after it is the bot's own message — editing one and deleting one are ungoverned,
+which is why the sweep only ever takes down blocks it wrote itself. Pinning is
+`Pin Messages`, which is **not** carried by Manage Messages: Discord split the two
+apart, so a bot trusted to delete anybody's message in a channel can still be
+refused a pin on its own. That is a confusing thing to read in a log, so the
+refusal says which permission it means.
+
 **Rate limits are why this exists at all.** Editing a message is a per-channel
 bucket of roughly five requests every five seconds, where setting a voice
 channel's status is two every ten minutes; that gap is the whole reason a running
@@ -63,6 +71,16 @@ ELLIPSIS = "…"
 # every other 400 here is a message Discord would never accept, and this one is a
 # channel that has no room for another pin.
 PINS_FULL = 30003
+
+# What a refused pin has to ask for, as the permission is named in the client.
+#
+# Pinning is its own permission and Manage Messages does not carry it, which is
+# worth spelling out where it is refused: a bot that can delete anybody's message
+# in a channel and still cannot pin its own reads like a bug in the bot rather
+# than a permission nobody has granted. Nothing else here needs a permission at
+# all beyond posting — a message of the bot's own is the bot's to edit and to
+# delete — so this is the only line that names one.
+PIN_PERMISSION = "Pin Messages"
 
 
 class DiscordTicker:
@@ -124,7 +142,8 @@ class DiscordTicker:
         except discord.Forbidden:
             logger.warning(
                 "Not allowed to edit in '%s'; %s will not keep a transcript there. "
-                "The bot needs Manage Messages on the channel.",
+                "Editing its own message takes no permission of its own, so what "
+                "has gone is the bot's access to the channel.",
                 channel,
                 server,
             )
@@ -182,7 +201,8 @@ class DiscordTicker:
         except discord.Forbidden:
             logger.warning(
                 "Not allowed to delete in '%s'; %s's transcript will stay up. "
-                "The bot needs Manage Messages on the channel.",
+                "Deleting its own message takes no permission of its own, so what "
+                "has gone is the bot's access to the channel.",
                 channel,
                 server,
             )
@@ -255,9 +275,11 @@ class DiscordTicker:
         except discord.Forbidden:
             logger.warning(
                 "Not allowed to pin in '%s'; %s's transcript will not be pinned. "
-                "The bot needs Manage Messages on the channel.",
+                "The bot needs %s on the channel — pinning has its own permission "
+                "and Manage Messages does not carry it.",
                 channel,
                 server,
+                PIN_PERMISSION,
             )
         except discord.HTTPException as exc:
             if exc.code == PINS_FULL:

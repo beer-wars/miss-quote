@@ -1,10 +1,12 @@
 """The one message a room watches, and what happens to it when Discord says no."""
 
+import logging
+
 import discord
 import pytest
 
 from miss_quote.bot.announcer import MESSAGE_LIMIT
-from miss_quote.bot.ticker import ELLIPSIS, DiscordTicker, trimmed
+from miss_quote.bot.ticker import ELLIPSIS, PIN_PERMISSION, DiscordTicker, trimmed
 
 ALIAS = "first-server"
 CHANNEL = "session-summaries"
@@ -400,3 +402,18 @@ async def test_a_pin_that_will_not_land_still_leaves_a_feed(failure):
 
     assert await _ticker(channel).show(ALIAS, CHANNEL, FIRST)
     assert channel.posted[0].content == FIRST
+
+
+async def test_a_refused_pin_names_the_permission_it_needs(caplog):
+    """
+    Manage Messages does not carry pinning, and a log line that says it does
+    sends whoever reads it to grant the wrong thing.
+    """
+    channel = Channel()
+    channel.pinning = discord.Forbidden(_Response(403), "no")
+
+    with caplog.at_level(logging.WARNING):
+        await _ticker(channel).show(ALIAS, CHANNEL, FIRST)
+
+    assert PIN_PERMISSION in caplog.text
+    assert "Manage Messages does not carry it" in caplog.text
