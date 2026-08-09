@@ -367,7 +367,7 @@ Keys are matched through the same slug that names the transcript directory, so `
 | `minimum_utterances` | `5` | Below this a session is not a conversation and is not summarized |
 | `backoff_seconds` | `120` | How soon the channel can be told the same evening again. `0`, or below, tells it every time |
 | `session_gap_minutes` | `10` | How long the room can sit quiet before the rest of the night is a different evening. Not `resume_seconds`, and not to be set to match it |
-| `schedule` | *(unset)* | When a session in this room may **start** being written down, as a list of `Wed 17:00-00:00`. Unset keeps every session, or whatever `settings.transcripts.schedule` says |
+| `schedule` | *(unset)* | When a session in this room may **start** being written down, as a list of `Wed 17:00-00:00`. Also what makes several sessions [one sitting](#one-evening-several-sessions) to summarize. Unset keeps every session, or whatever `settings.transcripts.schedule` says |
 | `preamble` | `Sure! Let me go look at my notes.` | What plays while the model is thinking |
 | `empty` | `I don't have any notes from this channel yet.` | What plays when nothing has ever been written down in this room |
 | `missing` | `I don't have any notes from then.` | What plays when there are notes, just not from the evening that was named |
@@ -381,6 +381,18 @@ Keys are matched through the same slug that names the transcript directory, so `
 | `post_transcripts` | `false` | Whether the room watches itself being transcribed, in one message in `channel` that is rewritten as it talks; see [showing it as it is said](#showing-it-as-it-is-said) |
 | `transcript_lines` | `10` | How many lines are up at once |
 | `transcript_refresh_seconds` | `2` | How long the feed waits after each write before writing again. Held at `0.25`; `0` turns the feed off |
+
+#### One evening, several sessions {#one-evening-several-sessions}
+
+A transcript is one **connection** to a voice channel, and a room produces several in a night — everybody steps out for ten minutes, somebody drags the bot next door, a pod restarts. None of those is the evening, and an account per connection is four half-summaries of one conversation.
+
+**Where the room is on a `schedule`, what gets summarized is the window.** A session that opened inside one occurrence of a window — this particular Wednesday evening, not Wednesday evenings in general — is summarized together with every other session filed inside that same occurrence. The account is written under the name of the session that **opened** the sitting, and every subsequent seal inside the window rewrites that one file, so the evening leaves a single summary that gets fuller rather than a pile of overlapping ones. The posted message is headed with when the sitting started, and is posted again on each rewrite; the last one is the complete account.
+
+Which occurrence a session belongs to is decided by **when it opened**, which is the same moment the schedule was asked about when it decided whether to write the session down at all. A window says when a sitting may start rather than how long it may run, so a session that opened at 23:40 inside `Wed 17:00-00:00` and sealed at 01:20 is part of Wednesday's evening — and it is usually the longest part of it. Windows that overlap count as one stretch, from the earliest start to the latest end; windows written back to back (`Wed 17:00-00:00` and `Thu 00:00-02:00`) are separate sittings, since the interval is half-open and only one of them covers any instant.
+
+A session that wrote nothing down does not trigger a rewrite: the sitting holds what it held, and asking for the same paragraphs again is a completion nobody reads. `minimum_utterances` is measured against the **whole** sitting, so two visits of three lines are a conversation where either alone would not be.
+
+**Outside a window, nothing changes.** A session that opened when no window covered it — a room put on the record by hand with `!start-transcribing`, or any room in a deployment that has configured no schedule at all — is summarized on its own, filed under its own name, exactly as before. That is the point of starting one by hand: it is a deliberate account of one conversation, and the sessions on either side of it were deliberately not kept.
 
 #### Showing it as it is said {#showing-it-as-it-is-said}
 

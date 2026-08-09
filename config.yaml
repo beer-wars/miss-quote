@@ -548,6 +548,15 @@ servers:
               # `!start-transcribing` overrides this for one session, including
               # in a room that named no windows at all.
               #
+              # A window is also what makes several sessions one thing to write
+              # about. A room empties and fills several times in an evening and
+              # each of those is its own transcript; the sessions filed inside
+              # one occurrence of a window are summarized together, under the
+              # name of the one that opened it, and every seal inside the window
+              # rewrites that account rather than filing another beside it. A
+              # session that opened outside every window — one started by hand —
+              # is summarized on its own, as it always was.
+              #
               # schedule:
               #   - Wed 17:00-00:00
 

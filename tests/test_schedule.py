@@ -104,6 +104,81 @@ def test_a_day_the_schedule_says_nothing_about_is_not_covered():
     assert not schedule.covers(_at(FRIDAY, "18:00"))
 
 
+# ── which occurrence of a window ──────────────────
+
+
+def test_an_occurrence_is_the_stretch_of_clock_around_the_moment():
+    """The Wednesday evening a session opened in, not Wednesday evenings at large."""
+    occurrence = Schedule.parse(["Wed 17:00-19:00"]).occurrence(_at(WEDNESDAY, "18:00"))
+
+    assert occurrence.start == _at(WEDNESDAY, "17:00")
+    assert occurrence.end == _at(WEDNESDAY, "19:00")
+
+
+def test_an_occurrence_of_a_wrapping_window_runs_into_the_next_day():
+    occurrence = Schedule.parse([EVENING]).occurrence(_at(WEDNESDAY, "23:40"))
+
+    assert occurrence.start == _at(WEDNESDAY, "17:00")
+    assert occurrence.end == _at(THURSDAY, "00:00")
+
+
+def test_a_moment_in_the_small_hours_belongs_to_the_evening_before_it():
+    """Which is what makes a session that opened at 23:40 and one at 00:20 one sitting."""
+    schedule = Schedule.parse(["Wed 17:00-02:00"])
+
+    assert schedule.occurrence(_at(THURSDAY, "00:20")) == schedule.occurrence(
+        _at(WEDNESDAY, "23:40")
+    )
+
+
+def test_a_whole_day_window_is_one_occurrence():
+    occurrence = Schedule.parse(["Wed 17:00-17:00"]).occurrence(_at(THURSDAY, "09:00"))
+
+    assert occurrence.start == _at(WEDNESDAY, "17:00")
+    assert occurrence.end == _at(THURSDAY, "17:00")
+
+
+def test_a_moment_outside_every_window_is_in_no_occurrence():
+    assert Schedule.parse([EVENING]).occurrence(_at(FRIDAY, "18:00")) is None
+
+
+def test_no_schedule_has_no_occurrences():
+    """
+    A deployment that keeps everything has no windows to be inside.
+
+    Reading that as one window with no ends would make every session a channel
+    ever had part of the same sitting.
+    """
+    assert ALWAYS.occurrence(_at(FRIDAY, "04:00")) is None
+
+
+def test_overlapping_windows_are_one_occurrence():
+    """Otherwise which one a session is in depends on the order of the file."""
+    occurrence = Schedule.parse(["Wed 17:00-20:00", "Wed 19:00-23:00"]).occurrence(
+        _at(WEDNESDAY, "19:30")
+    )
+
+    assert occurrence.start == _at(WEDNESDAY, "17:00")
+    assert occurrence.end == _at(WEDNESDAY, "23:00")
+
+
+def test_windows_written_back_to_back_stay_separate():
+    """Half-open, so only one of them covers any instant and neither is widened."""
+    schedule = Schedule.parse(["Wed 17:00-00:00", "Thu 00:00-02:00"])
+
+    assert schedule.occurrence(_at(WEDNESDAY, "23:00")).end == _at(THURSDAY, "00:00")
+    assert schedule.occurrence(_at(THURSDAY, "00:30")).start == _at(THURSDAY, "00:00")
+
+
+def test_an_occurrence_takes_its_start_and_not_its_end():
+    """Half-open on the same terms as the window it came from."""
+    occurrence = Schedule.parse(["Wed 17:00-19:00"]).occurrence(_at(WEDNESDAY, "18:00"))
+
+    assert occurrence.covers(_at(WEDNESDAY, "17:00"))
+    assert not occurrence.covers(_at(WEDNESDAY, "19:00"))
+    assert not occurrence.covers(_at(WEDNESDAY, "16:59"))
+
+
 # ── saying nothing, and saying nonsense ───────────
 
 
