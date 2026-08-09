@@ -111,6 +111,7 @@ quotes:
 | Setting | Required | Purpose |
 |---|---|---|
 | `quiet_seconds` | no, `1` | How long whoever said the trigger has to go quiet before the line is said. `0` says it where it was heard; see [letting the speaker finish](#letting-the-speaker-finish) |
+| `backoff_seconds` | no, [`settings.quotes.backoff_seconds`](#settings-quotes) | How long a trigger stays spent after it fires, for **this** server. `0`, or below, answers every trigger every time |
 | `chance` | no, `1` | The odds a trigger is answered at all, between `0` and `1`. Rolled once per utterance; see [answering only some of it](#answering-only-some-of-it) |
 | `answer_seconds` | no, `10` | How long the channel has to name the title once the line has finished playing. `0` stops the tool asking at all |
 | `tie_seconds` | no, `1` | How long after the first correct answer a second one is still paid. `0` pays only whoever was first |
@@ -253,7 +254,7 @@ Matching is **whole words, case-insensitive**, so `real` does not fire inside `r
 
 **One line per utterance**, however many triggers were in the sentence: two quotes over the top of each other is a denial of service on the channel. The one that answers is the **earliest in the sentence** rather than the first in the file, since that is the one whoever spoke arrived at. Where two triggers start at the same word the longer wins.
 
-**A trigger that has just fired goes quiet for [`settings.quotes.backoff_seconds`](#settings-quotes)**, five minutes by default. The joke is the recognition, and a channel that says "cool" four times in a minute does not want "Shiny." four times back. The window is keyed on the **trigger**, not the speaker and not the line, and is per server and held in memory only — so two channels arriving at the same line have each made the joke once, and a restart forgives every backoff.
+**A trigger that has just fired goes quiet for `backoff_seconds`** — the server's own, or [`settings.quotes.backoff_seconds`](#settings-quotes) where it named none, five minutes by default. The joke is the recognition, and a channel that says "cool" four times in a minute does not want "Shiny." four times back. The window is keyed on the **trigger**, not the speaker and not the line, and is per server and held in memory only — so two channels arriving at the same line have each made the joke once, and a restart forgives every backoff.
 
 **The whole list is rendered at startup.** The triggers are a closed set and so are the answers, so on the way up the tool hands `tts` every line in the file. A callback that arrives four seconds after the line it answers is not a callback. The exception is a line naming whoever set it off, which is rendered once per name on the roster.
 
@@ -578,10 +579,17 @@ verbal-morality:
 |---|---|---|
 | `words` | yes | Stems of what the server objects to. A lone one may be written unquoted rather than as a list |
 | `announcement` | no | What gets said. `{user}`, `{credits}`, and `{violations}` are the placeholders |
-| `repeat_announcement` | no | Said instead when the same speaker is fined again inside [`settings.fines.repeat_seconds`](#settings-fines). Same placeholders |
+| `repeat_announcement` | no | Said instead when the same speaker is fined again inside `repeat_seconds`, below. Same placeholders |
 | `recall_triggers` | no, `what did i say`, `what did i just say`, `what was that` | How somebody asks what they were just fined for. **Replaces** the default. A lone one may be written unquoted rather than as a list |
 | `recall_announcement` | no | What they are told. `{user}` and `{word}` are the placeholders — not `{credits}`, which is not what is being announced |
 | `chime` | no | A WAV in `SPEECH_DIR/chimes`, played ahead of the announcement, named without its `.wav`. Also the whole of a [dampened fine](#what-a-fine-costs-and-how-loudly) |
+| `repeat_seconds` | no, [`settings.fines`](#settings-fines) | How soon the same speaker is told they are "also fined" rather than hearing the whole sentence again |
+| `recall_seconds` | no, [`settings.fines`](#settings-fines) | How long after being fined a speaker can ask what the word was |
+| `backoff_seconds` | no, [`settings.fines`](#settings-fines) | The sliding window a violation counts for against how loudly the next one is announced |
+| `backoff_percent` | no, [`settings.fines`](#settings-fines) | How much of the next announcement's loudness each violation inside that window takes off |
+| `volume_floor` | no, [`settings.fines`](#settings-fines) | The quietest a fine is announced once the full backoff is earned |
+| `dampen_after` | no, [`settings.fines`](#settings-fines) | How many fines this server's speakers hear in full before a one-credit one drops to the chime |
+| `dampen_seconds` | no, [`settings.fines`](#settings-fines) | The sliding window that budget is spent inside |
 
 All three templates default to the lines above, which the tool carries, so a server that wants the defaults can leave them out. A template with a placeholder nothing fills is rejected at startup rather than at the moment someone swears, and the error names which setting it was and which placeholders that one actually has — `recall_announcement` has `{user}` and `{word}`, and reaching for `{credits}` in it is refused.
 
@@ -599,15 +607,17 @@ Matching is **whole words, case-insensitive**. A substring match fines the innoc
 
 #### What a fine costs, and how loudly {#what-a-fine-costs-and-how-loudly}
 
+The settings named in this section — `repeat_seconds`, `recall_seconds`, `backoff_seconds`, `backoff_percent`, `volume_floor`, `dampen_after`, and `dampen_seconds` — are written either here, in this server's `config`, or in [`settings.fines`](#settings-fines) for every server that names none of its own. This server's wins.
+
 **The fine scales with the utterance**: one credit per forbidden word in it, so three of them is `3 credits` and one is `1 credit`. The count is filled into `{credits}` already pluralized, as a numeral — every synthesizer worth pointing this at reads `3` as a number, and `1 credits` is wrong in a way a listener hears. What a credit is *called* is [`settings.credits.currency`](#settings-credits), and the plural is grown from it by the same spelling rules the word list uses, so `penny` announces as `2 pennies`. `{violations}` agrees with the count, reading `a violation` for one and `multiple violations` for more.
 
 What does not scale is the number of announcements. Three violations in one utterance earn one, because three announcements over the top of each other is a denial of service on the channel. **A violation earned while an announcement is playing is counted and not announced at all** — the speaker plays one clip at a time, so the alternative is a queue, and a channel where three people swear over each other would spend the next minute being read fines for things it has moved on from. The tally is charged either way: what somebody owes is not a function of whether they were told about it.
 
-**Being fined twice in a row is worded differently.** A speaker fined again inside `settings.fines.repeat_seconds` gets `repeat_announcement` — "you are *also* fined" — because reading the whole sentence out again sounds like a bot that has lost track of what it just said. It is per speaker: somebody else swearing in the meantime does not make their first fine a repeat.
+**Being fined twice in a row is worded differently.** A speaker fined again inside `repeat_seconds` gets `repeat_announcement` — "you are *also* fined" — because reading the whole sentence out again sounds like a bot that has lost track of what it just said. It is per speaker: somebody else swearing in the meantime does not make their first fine a repeat.
 
-**A repeat offender is announced more quietly.** Being fined is the joke, and the joke told fifteen times in five minutes is a denial of service on the conversation. Every violation inside a sliding `settings.fines.backoff_seconds` takes `settings.fines.backoff_percent` off the next announcement, down to `settings.fines.volume_floor` — at the defaults, 5% a violation over five minutes, floored at a quarter as loud as `PLAYBACK_VOLUME`, so fifteen of them reach the bottom. The percentage is off what a listener hears rather than off the amplitude ([how a volume is read](#volumes)), so each step is one somebody can actually notice. The first swear in a window is announced at full volume: the backoff is for saying it again. The window is per speaker and per server, held in memory only. What it does **not** affect is the tally.
+**A repeat offender is announced more quietly.** Being fined is the joke, and the joke told fifteen times in five minutes is a denial of service on the conversation. Every violation inside a sliding `backoff_seconds` takes `backoff_percent` off the next announcement, down to `volume_floor` — at the defaults, 5% a violation over five minutes, floored at a quarter as loud as `PLAYBACK_VOLUME`, so fifteen of them reach the bottom. The percentage is off what a listener hears rather than off the amplitude ([how a volume is read](#volumes)), so each step is one somebody can actually notice. The first swear in a window is announced at full volume: the backoff is for saying it again. The window is per speaker and per server, held in memory only. What it does **not** affect is the tally.
 
-**Past a point the sentence stops being said at all.** A speaker is read `settings.fines.dampen_after` fines in full inside a sliding `settings.fines.dampen_seconds` — an hour by default — and once that budget is spent, a **one-credit** fine is the `chime` on its own with no words behind it. It is the backoff's argument carried to its end: a quarter-volume sentence is still a whole sentence read over the top of whatever the channel was talking about, and a room that has settled into swearing already knows the wording. **This is off unless a deployment asks for it**; `-1` is the default and announces every fine in full, and `0` dampens from the first one.
+**Past a point the sentence stops being said at all.** A speaker is read `dampen_after` fines in full inside a sliding `dampen_seconds` — an hour by default — and once that budget is spent, a **one-credit** fine is the `chime` on its own with no words behind it. It is the backoff's argument carried to its end: a quarter-volume sentence is still a whole sentence read over the top of whatever the channel was talking about, and a room that has settled into swearing already knows the wording. **This is off unless somebody asks for it**; `-1` is the default and announces every fine in full, and `0` dampens from the first one.
 
 What is never dampened is a fine worth **more than one credit**. Several forbidden words in one breath is a thing somebody has just done rather than the one the channel has heard all evening, and the sentence naming what it cost is the whole of the joke. It does spend from the budget, though — what the budget meters is whole sentences, whatever earned them.
 
@@ -621,7 +631,7 @@ A server electing in with no `words` is enabled and listening for nothing, which
 
 #### Asking what it was
 
-The announcement names the fine and never the word. **Saying one of `recall_triggers` within [`settings.fines.recall_seconds`](#settings-fines) of being fined is answered with the word**, through `recall_announcement` — ten seconds by default, and it is the whole gate. "What did I say" is a thing people say to each other, and what makes it a question for the bot is that whoever asked was fined seconds ago; outside the window, and for anybody with no fine on record, nothing is said at all.
+The announcement names the fine and never the word. **Saying one of `recall_triggers` within `recall_seconds` of being fined is answered with the word**, through `recall_announcement` — ten seconds by default, and it is the whole gate. "What did I say" is a thing people say to each other, and what makes it a question for the bot is that whoever asked was fined seconds ago; outside the window, and for anybody with no fine on record, nothing is said at all.
 
 The answer is **the last word of the fine that earned it**, so somebody who strung several together is told the one they finished on, and it is **the asker's own**: another speaker's word is not an answer to what you said.
 
@@ -662,6 +672,8 @@ Only used by `scoreboard`. Where the tally is written down is `CREDITS_FILE`.
 
 Only used by `verbal-morality`. What a fine is *worth* is the scoreboard's; these are how it is said.
 
+**These are the deployment's answer, and a server may write any of them in its own [`verbal-morality`](#verbal-morality) config instead**, where it wins. Two servers wanting the same numbers write them once, here; a server with a different sense of humour says so where the rest of its fines are configured. The same value written per server is **raised on** rather than defaulted past if it will not parse — a settings block is read before any server exists, while a value in a tool's config is that server electing into something, and ignoring a typo there would leave one channel wondering why it sounds like the other one.
+
 | Setting | Default | Purpose |
 |---|---|---|
 | `repeat_seconds` | `5.0` | How soon after being fined the same speaker is told they are "also fined" rather than hearing the whole sentence again. `0`, or any value below it, turns the second wording off |
@@ -675,6 +687,8 @@ Only used by `verbal-morality`. What a fine is *worth* is the scoreboard's; thes
 ### settings.quotes {#settings-quotes}
 
 Only used by `quotes`. The triggers and the lines themselves are a YAML file at `QUOTES_FILE`, plus whatever a server [added for itself](#what-a-server-adds-for-itself).
+
+**The deployment's answer, which a server may override in its own [`quotes`](#quotes) config**, on the same terms as a fine: one room says the same six things all night and the next one does not.
 
 | Setting | Default | Purpose |
 |---|---|---|

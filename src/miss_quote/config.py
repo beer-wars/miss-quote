@@ -8,7 +8,7 @@ which says how it behaves.
 
 import os
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -85,6 +85,18 @@ def _env_bool(name: str, default: bool) -> bool:
 def _fraction(percent: float) -> float:
     """A percentage, as the fraction everything else scales audio by."""
     return percent / PERCENT
+
+
+def _volume(scale: float) -> float:
+    """
+    A loudness held between silence and the channel's own.
+
+    Anything above unity would be a way of getting louder than the deployment
+    asked to be, and anything below zero would invert the audio rather than
+    quieten it. Both ends are held rather than raised on: what was meant is
+    plain, and the nearest thing to it is a working volume.
+    """
+    return min(UNITY_VOLUME, max(SILENT_VOLUME, scale))
 
 
 # ──────────────────────────────────────────────
@@ -786,9 +798,13 @@ class MoralityConfig:
     How soon a fine is a repeat, how quiet a repeat offender gets, and how often
     one is announced in full rather than as its chime.
 
-    Where the rest of the tool's settings are per server and live in the mounted
-    file, these are per deployment. What a fine costs and where that is written
-    down belong to the scoreboard rather than here; see `ScoreboardConfig`.
+    What is here is the **deployment's** answer, which is the one a server that
+    says nothing gets. A server with a different sense of humour writes any of
+    these in its own `verbal-morality` config and that wins; see `overridden`.
+    Two servers wanting the same numbers therefore write them once.
+
+    What a fine costs and where that is written down belong to the scoreboard
+    rather than here; see `ScoreboardConfig`.
     """
 
     # How soon after being fined a speaker is announced as being fined *again*,
@@ -826,12 +842,8 @@ class MoralityConfig:
     # to reach the floor, and anything below 0 would make a repeat offender
     # louder rather than quieter.
     backoff_step: float = field(
-        default_factory=lambda: min(
-            UNITY_VOLUME,
-            max(
-                SILENT_VOLUME,
-                _fraction(file_cfg.setting(FINES_SECTION, BACKOFF_PERCENT_KEY, 5.0)),
-            ),
+        default_factory=lambda: _volume(
+            _fraction(file_cfg.setting(FINES_SECTION, BACKOFF_PERCENT_KEY, 5.0))
         )
     )
 
@@ -840,12 +852,8 @@ class MoralityConfig:
     # is a quarter as loud. 0 silences them entirely; 1 turns the backoff off,
     # since there is nowhere to back off to.
     volume_floor: float = field(
-        default_factory=lambda: min(
-            UNITY_VOLUME,
-            max(
-                SILENT_VOLUME,
-                file_cfg.setting(FINES_SECTION, VOLUME_FLOOR_KEY, 0.25),
-            ),
+        default_factory=lambda: _volume(
+            file_cfg.setting(FINES_SECTION, VOLUME_FLOOR_KEY, 0.25)
         )
     )
 
@@ -871,6 +879,67 @@ class MoralityConfig:
             FINES_SECTION, DAMPEN_SECONDS_KEY, 3600.0
         )
     )
+
+    def overridden(self, config: Mapping[str, Any]) -> "MoralityConfig":
+        """
+        These, with whatever one server's `verbal-morality` config said instead.
+
+        The deployment names what a fine sounds like everywhere and a server
+        names what it sounds like there, which is the same hierarchy the capture
+        schedule already has. A key the server left out is the deployment's, and
+        the deployment's is the built-in default it left out in turn.
+
+        Raised on rather than defaulted past, unlike the same name written in
+        the settings block. A value in the settings block is read before any
+        server exists and a complaint about it is a line at startup; a value in a
+        tool's config is that server electing into something, and quietly
+        ignoring a typo would leave one channel wondering why it sounds like the
+        other one. The runner reports the tool as having refused to start.
+
+        The clamps are the fields' own, so a floor written per server is held
+        between silence and unity exactly as a floor written per deployment is.
+        """
+        return replace(
+            self,
+            repeat_seconds=_asked(REPEAT_SECONDS_KEY, config, self.repeat_seconds),
+            recall_seconds=_asked(RECALL_SECONDS_KEY, config, self.recall_seconds),
+            backoff_seconds=_asked(BACKOFF_SECONDS_KEY, config, self.backoff_seconds),
+            backoff_step=_volume(
+                _fraction(
+                    _asked(
+                        BACKOFF_PERCENT_KEY, config, _percent(self.backoff_step)
+                    )
+                )
+            ),
+            volume_floor=_volume(
+                _asked(VOLUME_FLOOR_KEY, config, self.volume_floor)
+            ),
+            dampen_after=_asked(DAMPEN_AFTER_KEY, config, self.dampen_after),
+            dampen_seconds=_asked(DAMPEN_SECONDS_KEY, config, self.dampen_seconds),
+        )
+
+
+def _asked(key: str, config: Mapping[str, Any], default: SettingT) -> SettingT:
+    """
+    One number a server wrote in a tool's config, or what it falls back to.
+
+    The complaint names the key rather than the value's type, so a server told
+    which setting is wrong does not have to work out which of its settings it
+    was.
+    """
+    written = config.get(key)
+    if written is None:
+        return default
+
+    try:
+        return type(default)(written)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"'{key}' must be a number, not {written!r}: {exc}") from exc
+
+
+def _percent(fraction: float) -> float:
+    """A fraction, as the percentage somebody writes in a config file."""
+    return fraction * PERCENT
 
 
 # ──────────────────────────────────────────────
@@ -904,6 +973,10 @@ class QuotesConfig:
     # recognition, and a channel that keeps saying the same word does not want
     # the same line back each time. Any value at or below zero answers every
     # trigger every time, which is a deployment's own business to want.
+    #
+    # The deployment's answer, which is what a server that says nothing gets. A
+    # server writes its own under the `quotes` tool, on the same terms as a fine:
+    # one room says the same six things all night and the next does not.
     backoff_seconds: float = field(
         default_factory=lambda: file_cfg.setting(
             QUOTES_SECTION, BACKOFF_SECONDS_KEY, 300.0

@@ -16,33 +16,40 @@ chime in front of them, and the voice connection they go out over. A server with
 no `tts` counts fines and says nothing, on the same terms and reported the same
 way.
 
+How a fine is announced is settled twice. The deployment says what one sounds
+like everywhere, in `settings.fines`, and a server that wants something else
+writes it in this tool's own config, where it wins; see
+`MoralityConfig.overridden`. What follows names the settings without saying which
+of the two a given deployment took them from, there being no difference by the
+time the tool is built.
+
 A repeat offender is announced more and more quietly. Being fined is the joke,
 and a joke told fifteen times in five minutes is a denial of service on the
-conversation, so the announcement backs off toward `settings.fines.volume_floor`
-as somebody keeps earning them. See `RecentViolations`.
+conversation, so the announcement backs off toward `volume_floor` as somebody
+keeps earning them. See `RecentViolations`.
 
 Past a point, turning the sentence down is not enough and it stops being said at
-all. A speaker gets `settings.fines.dampen_after` fines read out in full inside
-`settings.fines.dampen_seconds`, and once that is spent a single-credit fine is
-the chime on its own — the room has heard the wording, and what is left to convey
-is that it happened. A fine worth more than one credit is always said in full,
-being a thing somebody has just done rather than the one the channel has heard
-all evening. Off unless a deployment asks for it. See `RecentAnnouncements`.
+all. A speaker gets `dampen_after` fines read out in full inside
+`dampen_seconds`, and once that is spent a single-credit fine is the chime on its
+own — the room has heard the wording, and what is left to convey is that it
+happened. A fine worth more than one credit is always said in full, being a thing
+somebody has just done rather than the one the channel has heard all evening. Off
+unless somebody asks for it. See `RecentAnnouncements`.
 
 For the same reason a violation earned while an announcement is already playing
 is counted and not announced. The speaker plays one clip at a time and returns
 when it is finished, so waiting for a turn would leave the channel working
 through a backlog of fines for things said a minute ago.
 
-A speaker fined again within `settings.fines.repeat_seconds` gets the second
-wording — "you are also fined" — because reading the whole sentence out again
-sounds like a bot that has lost track of what it just said.
+A speaker fined again within `repeat_seconds` gets the second wording — "you are
+also fined" — because reading the whole sentence out again sounds like a bot that
+has lost track of what it just said.
 
 The announcement names the fine and never the word, so somebody who missed it
-can ask: "what did I say" inside `settings.fines.recall_seconds` is answered with
-whatever they were last fined for. The window is the whole gate, which is what
-keeps a phrase that common from being one the tool is always answering — outside
-it the question is somebody talking to the room. See `_recall`.
+can ask: "what did I say" inside `recall_seconds` is answered with whatever they
+were last fined for. The window is the whole gate, which is what keeps a phrase
+that common from being one the tool is always answering — outside it the question
+is somebody talking to the room. See `_recall`.
 
 What the server writes down are stems. Each is expanded at startup into the
 endings it is said with, so a list stays a list of words rather than a list of
@@ -67,6 +74,7 @@ from typing import Any
 from miss_quote.config import (
     PERCENT,
     UNITY_VOLUME,
+    MoralityConfig,
     morality_cfg,
     scoreboard_cfg,
 )
@@ -229,8 +237,8 @@ class RecentViolations(Recent):
     """
     How much somebody has sworn lately, and how loudly to say so.
 
-    A `settings.fines.backoff_seconds` after their last one, a speaker is back
-    to being announced at whatever loudness the channel asked for.
+    A `backoff_seconds` after their last one, a speaker is back to being
+    announced at whatever loudness the channel asked for.
 
     Every forbidden word is recorded, on the same terms as the fine: somebody who
     strings four together has earned four credits and four steps of backoff,
@@ -239,15 +247,18 @@ class RecentViolations(Recent):
 
     def __init__(
         self,
+        fines: MoralityConfig | None = None,
         window_seconds: float | None = None,
         step: float | None = None,
         floor: float | None = None,
     ) -> None:
+        settings = morality_cfg if fines is None else fines
+
         super().__init__(
-            morality_cfg.backoff_seconds if window_seconds is None else window_seconds
+            settings.backoff_seconds if window_seconds is None else window_seconds
         )
-        self._step = morality_cfg.backoff_step if step is None else step
-        self._floor = morality_cfg.volume_floor if floor is None else floor
+        self._step = settings.backoff_step if step is None else step
+        self._floor = settings.volume_floor if floor is None else floor
 
     def scale(self, user_id: int, now: float | None = None) -> float:
         """
@@ -295,22 +306,26 @@ class RecentAnnouncements(Recent):
     else was playing cost the conversation nothing, and spending the budget on it
     would dampen the next one on the strength of a sentence nobody heard.
 
-    Off unless a deployment asks: a `settings.fines.dampen_after` below
-    `SMALLEST_BUDGET` never reports a speaker as spent, which is every fine in
-    full and no window kept.
+    Off unless somebody asks: a `dampen_after` below `SMALLEST_BUDGET` never
+    reports a speaker as spent, which is every fine in full and no window kept.
     """
 
     def __init__(
-        self, window_seconds: float | None = None, budget: int | None = None
+        self,
+        fines: MoralityConfig | None = None,
+        window_seconds: float | None = None,
+        budget: int | None = None,
     ) -> None:
+        settings = morality_cfg if fines is None else fines
+
         super().__init__(
-            morality_cfg.dampen_seconds if window_seconds is None else window_seconds
+            settings.dampen_seconds if window_seconds is None else window_seconds
         )
-        self._budget = morality_cfg.dampen_after if budget is None else budget
+        self._budget = settings.dampen_after if budget is None else budget
 
     @property
     def dampening(self) -> bool:
-        """Whether the deployment asked for any of this."""
+        """Whether this server asked for any of this."""
         return self._budget >= SMALLEST_BUDGET
 
     def spent(self, user_id: int, now: float | None = None) -> bool:
@@ -362,8 +377,14 @@ class VerbalMorality(Tool):
             )
         )
         self._chime = _named(config.get(CHIME_KEY))
-        self._recent = RecentViolations()
-        self._announced = RecentAnnouncements()
+
+        # The deployment's fines, with whatever this server said instead. Read
+        # once here rather than on the way past, so a server electing into
+        # something the announcement cannot do is a tool that refused to start
+        # rather than a discovery made at the moment somebody swears.
+        self._fines = morality_cfg.overridden(config)
+        self._recent = RecentViolations(self._fines)
+        self._announced = RecentAnnouncements(self._fines)
         self._fined: dict[int, tuple[str, float]] = {}
         self._announcing = False
 
@@ -428,7 +449,7 @@ class VerbalMorality(Tool):
                 "[%s] Fines are dampened after %d in the window and there is no "
                 "'%s' to dampen them to, so a dampened fine will say nothing.",
                 self.server,
-                morality_cfg.dampen_after,
+                self._fines.dampen_after,
                 CHIME_KEY,
             )
 
@@ -495,7 +516,7 @@ class VerbalMorality(Tool):
             return
 
         scale = self._recent.scale(utterance.user_id)
-        repeat = self._recent.repeating(utterance.user_id, morality_cfg.repeat_seconds)
+        repeat = self._recent.repeating(utterance.user_id, self._fines.repeat_seconds)
         self._recent.record(utterance.user_id, len(offences))
 
         # The last of them, and recorded whether or not the fine is announced.
@@ -645,7 +666,7 @@ class VerbalMorality(Tool):
         nothing anybody says is inside the window, and nothing outside it is
         worth matching against.
         """
-        if morality_cfg.recall_seconds <= NEVER_RECALLS:
+        if self._fines.recall_seconds <= NEVER_RECALLS:
             return None
 
         fined = self._fined.get(user_id)
@@ -653,7 +674,7 @@ class VerbalMorality(Tool):
             return None
 
         word, when = fined
-        if time.monotonic() - when > morality_cfg.recall_seconds:
+        if time.monotonic() - when > self._fines.recall_seconds:
             self._fined.pop(user_id, None)
             return None
 
