@@ -25,6 +25,7 @@ from miss_quote.tools.summary import (
     Summary,
 )
 from miss_quote.tools.tts import Tts
+from miss_quote.transcript.schedule import Schedule
 from miss_quote.transcript.writer import Source, Transcript, Utterance
 
 SERVER = "first-server"
@@ -81,6 +82,17 @@ SUMMARIZED_AND_RETOLD = 2
 # lands on a weekday a channel plausibly meets on.
 TODAY = date(2026, 7, 31)
 ZONE = ZoneInfo(transcript_cfg.timezone)
+
+# A capture window and two sessions inside one occurrence of it. 2026-07-29 is a
+# Wednesday, and the moments are in the timezone transcripts are named in, since
+# which sitting a session belongs to is read back off those names.
+WEDNESDAY_EVENING = "Wed 17:00-00:00"
+OPENED_THE_SITTING = datetime(2026, 7, 29, 17, 12, 0, tzinfo=ZONE)
+SEALED_LATER = datetime(2026, 7, 29, 18, 40, 0, tzinfo=ZONE)
+
+# The same room on the same day, hours before the window opens: a session
+# somebody put on the record by hand.
+OFF_THE_SCHEDULE = datetime(2026, 7, 29, 12, 0, 0, tzinfo=ZONE)
 
 WATCHED_SOURCE = Source(
     guild_id=1, guild_alias=SERVER, channel_id=10, channel=WATCHED
@@ -216,6 +228,26 @@ def summaries(tmp_path, monkeypatch):
     return tmp_path
 
 
+class FakeSchedules:
+    """The deployment's capture windows, as the tool asks the config file for them."""
+
+    def __init__(self, windows: tuple[str, ...]) -> None:
+        self._schedule = Schedule.parse(windows)
+
+    def schedule_for(self, guild_id: int, channel: str) -> Schedule:
+        return self._schedule
+
+
+@pytest.fixture
+def scheduled(monkeypatch):
+    """Put the rooms on a capture window, which is what makes a sitting a sitting."""
+
+    def on(*windows: str) -> None:
+        monkeypatch.setattr(summary_module, "file_cfg", FakeSchedules(windows))
+
+    return on
+
+
 @pytest.fixture
 def model(monkeypatch):
     """A model that answers instantly, remembering what it was asked."""
@@ -285,6 +317,49 @@ def _silent_ending() -> dict:
             WATCHED: {"channel": POSTING_CHANNEL, "preamble": PREAMBLE, "empty": EMPTY}
         }
     }
+
+
+def _stem(opened: datetime) -> str:
+    """A session's name, which is the moment it opened, as the writer spells it."""
+    return opened.strftime(transcript_cfg.filename_timestamp_format)
+
+
+def _sat(
+    root: Path,
+    opened: datetime,
+    *,
+    said: str = "and so on",
+    lines: int = ENOUGH_UTTERANCES,
+    source: Source = WATCHED_SOURCE,
+) -> Transcript:
+    """
+    One sealed session filed under the moment it opened.
+
+    Named the way the writer names one, because which sitting a session belongs
+    to is read back off the filenames in the directory — a fixed name would put
+    every session of a test in the same second.
+    """
+    path = root / "transcripts" / source.relative_directory / f"{_stem(opened)}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(
+            json.dumps(
+                {
+                    "ts": opened.isoformat(),
+                    "user_id": 1,
+                    "user": ASKER,
+                    "text": said,
+                }
+            )
+            + "\n"
+            for _ in range(lines)
+        ),
+        encoding="utf-8",
+    )
+
+    return Transcript(
+        path=path, source=source, opened=opened, closed=opened, utterances=lines
+    )
 
 
 def _transcript(root: Path, source: Source, lines: int = ENOUGH_UTTERANCES) -> Transcript:
@@ -437,6 +512,115 @@ async def test_a_channel_with_nowhere_to_post_still_writes_the_summary(summaries
 
     assert list((summaries / "summaries").rglob("*.txt"))
     assert announcer.posts == []
+
+
+# ── one sitting, several sessions ─────────────
+
+
+async def test_a_sitting_is_summarized_whole(summaries, model, scheduled):
+    """A room that emptied and refilled is one evening, not two accounts of one."""
+    scheduled(WEDNESDAY_EVENING)
+    tool, _ = _tool(minimum_utterances=1)
+
+    _sat(summaries, OPENED_THE_SITTING, said="the first half")
+    sealed = _sat(summaries, SEALED_LATER, said="the second half")
+
+    await tool.handle_finished(sealed)
+    _, script = model.asked[0]
+
+    assert "the first half" in script
+    assert "the second half" in script
+
+
+async def test_the_account_of_a_sitting_keeps_one_name(summaries, model, scheduled):
+    """Every seal rewrites the same file, so an evening leaves one account."""
+    scheduled(WEDNESDAY_EVENING)
+    tool, _ = _tool(minimum_utterances=1)
+
+    first = _sat(summaries, OPENED_THE_SITTING, said="the first half")
+    await tool.handle_finished(first)
+
+    second = _sat(summaries, SEALED_LATER, said="the second half")
+    await tool.handle_finished(second)
+
+    stored = list((summaries / "summaries").rglob("*.txt"))
+    assert [path.name for path in stored] == [f"{_stem(OPENED_THE_SITTING)}.txt"]
+
+
+async def test_a_rewritten_account_covers_the_whole_sitting(summaries, model, scheduled):
+    scheduled(WEDNESDAY_EVENING)
+    tool, _ = _tool(minimum_utterances=1)
+    model.answers = ["just the first half", "the whole evening"]
+
+    await tool.handle_finished(
+        _sat(summaries, OPENED_THE_SITTING, said="the first half")
+    )
+    await tool.handle_finished(_sat(summaries, SEALED_LATER, said="the second half"))
+
+    stored = list((summaries / "summaries").rglob("*.txt"))
+    assert stored[0].read_text(encoding="utf-8") == "the whole evening"
+
+
+async def test_the_post_is_headed_with_when_the_sitting_started(
+    summaries, model, scheduled
+):
+    """Not with the moment its last twenty minutes began."""
+    scheduled(WEDNESDAY_EVENING)
+    announcer = FakeAnnouncer()
+    tool, _ = _tool(announcer=announcer, minimum_utterances=1)
+
+    _sat(summaries, OPENED_THE_SITTING, said="the first half")
+    await tool.handle_finished(_sat(summaries, SEALED_LATER, said="the second half"))
+
+    _, posted = announcer.posts[0]
+    assert OPENED_THE_SITTING.strftime("%H:%M") in posted
+
+
+async def test_a_session_opened_outside_every_window_is_its_own(
+    summaries, model, scheduled
+):
+    """A room put on the record by hand is an account of one conversation."""
+    scheduled(WEDNESDAY_EVENING)
+    tool, _ = _tool(minimum_utterances=1)
+
+    _sat(summaries, OPENED_THE_SITTING, said="the scheduled evening")
+    by_hand = _sat(summaries, OFF_THE_SCHEDULE, said="the one somebody started")
+
+    await tool.handle_finished(by_hand)
+    _, script = model.asked[0]
+
+    assert "the scheduled evening" not in script
+    assert list((summaries / "summaries").rglob("*.txt"))[0].name == (
+        f"{_stem(OFF_THE_SCHEDULE)}.txt"
+    )
+
+
+async def test_a_session_that_wrote_nothing_leaves_the_account_alone(
+    summaries, model, scheduled
+):
+    """The sitting holds what it held, and the same paragraphs again cost a completion."""
+    scheduled(WEDNESDAY_EVENING)
+    tool, _ = _tool(minimum_utterances=1)
+
+    await tool.handle_finished(
+        _sat(summaries, OPENED_THE_SITTING, said="the first half")
+    )
+    await tool.handle_finished(_sat(summaries, SEALED_LATER, lines=0))
+
+    assert len(model.asked) == 1
+
+
+async def test_a_sitting_is_measured_against_the_minimum_whole(
+    summaries, model, scheduled
+):
+    """Two sessions of three lines are a conversation; either alone is not."""
+    scheduled(WEDNESDAY_EVENING)
+    tool, _ = _tool(minimum_utterances=5)
+
+    _sat(summaries, OPENED_THE_SITTING, said="a line", lines=3)
+    await tool.handle_finished(_sat(summaries, SEALED_LATER, said="a line", lines=3))
+
+    assert len(model.asked) == 1
 
 
 # ── reading it back ───────────────────────────

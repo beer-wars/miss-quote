@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from miss_quote.config import transcript_cfg
 from miss_quote.summary.store import SummaryStore
 from miss_quote.summary.when import LATEST, When
+from miss_quote.transcript.schedule import Occurrence
 from miss_quote.transcript.writer import Source, Transcript
 
 KEEP_FOREVER = -1
@@ -102,6 +103,20 @@ def _session(
         written = tmp_path / "summaries" / source.relative_directory / f"{stem}.txt"
         written.parent.mkdir(parents=True, exist_ok=True)
         written.write_text(summary, encoding="utf-8")
+
+    return stem
+
+
+def _spoken(
+    tmp_path: Path, opened: datetime, text: str, source: Source = SOURCE
+) -> str:
+    """One filed session with something particular said in it, for a test that reads."""
+    stem = _stem(opened)
+    path = tmp_path / "transcripts" / source.relative_directory / f"{stem}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    line = {"ts": opened.isoformat(), "user_id": 1234, "user": "someone", "text": text}
+    path.write_text(json.dumps(line) + "\n", encoding="utf-8")
 
     return stem
 
@@ -572,6 +587,122 @@ def test_latest_is_find_with_no_date(tmp_path):
     _session(tmp_path, _at(2026, 7, 26, 20, 0, 0), summary="the only one")
 
     assert store.find(SOURCE, LATEST, GAP).read() == store.latest(SOURCE, GAP).read()
+
+
+# ── one sitting, several sessions ─────────────
+
+
+def _occurrence(start: datetime, end: datetime) -> Occurrence:
+    """A window as it happened, which is what a sitting is gathered inside."""
+    return Occurrence(start=start, end=end)
+
+
+WEDNESDAY_EVENING = _occurrence(_at(2026, 7, 29, 17, 0, 0), _at(2026, 7, 30, 0, 0, 0))
+
+
+def test_a_sitting_is_every_session_the_window_produced(tmp_path):
+    """A room that emptied and refilled twice is one thing to write about."""
+    store = _store(tmp_path)
+
+    first = _session(
+        tmp_path, _at(2026, 7, 29, 17, 12, 0), spoken=_at(2026, 7, 29, 17, 40, 0)
+    )
+    second = _session(
+        tmp_path, _at(2026, 7, 29, 18, 40, 0), spoken=_at(2026, 7, 29, 19, 5, 0)
+    )
+
+    sitting = store.sitting(SOURCE, WEDNESDAY_EVENING)
+
+    assert [session.name for session in sitting.sessions] == [first, second]
+
+
+def test_a_session_outside_the_window_is_not_in_the_sitting(tmp_path):
+    store = _store(tmp_path)
+
+    inside = _session(
+        tmp_path, _at(2026, 7, 29, 20, 0, 0), spoken=_at(2026, 7, 29, 20, 30, 0)
+    )
+    _session(tmp_path, _at(2026, 7, 29, 12, 0, 0), spoken=_at(2026, 7, 29, 12, 30, 0))
+
+    sitting = store.sitting(SOURCE, WEDNESDAY_EVENING)
+
+    assert [session.name for session in sitting.sessions] == [inside]
+
+
+def test_a_session_that_opened_before_midnight_is_the_evening_it_began_in(tmp_path):
+    """A window says when a sitting may start, not how long it may run."""
+    store = _store(tmp_path)
+
+    late = _session(
+        tmp_path, _at(2026, 7, 29, 23, 40, 0), spoken=_at(2026, 7, 30, 1, 20, 0)
+    )
+
+    sitting = store.sitting(SOURCE, WEDNESDAY_EVENING)
+
+    assert [session.name for session in sitting.sessions] == [late]
+
+
+def test_a_window_nobody_sat_through_is_no_sitting(tmp_path):
+    store = _store(tmp_path)
+
+    _session(
+        tmp_path, _at(2026, 7, 28, 20, 0, 0), spoken=_at(2026, 7, 28, 20, 30, 0)
+    )
+
+    assert store.sitting(SOURCE, WEDNESDAY_EVENING) is None
+
+
+def test_a_sitting_is_named_and_dated_for_the_session_that_opened_it(tmp_path):
+    """Every seal inside the window writes that one file, so it cannot move."""
+    store = _store(tmp_path)
+
+    opened = _at(2026, 7, 29, 17, 12, 0)
+    first = _session(tmp_path, opened, spoken=_at(2026, 7, 29, 17, 40, 0))
+    _session(
+        tmp_path, _at(2026, 7, 29, 21, 5, 0), spoken=_at(2026, 7, 29, 21, 30, 0)
+    )
+
+    sitting = store.sitting(SOURCE, WEDNESDAY_EVENING)
+
+    assert sitting.name == first
+    assert sitting.opened == opened
+
+
+def test_a_sitting_is_read_in_the_order_it_was_said(tmp_path):
+    store = _store(tmp_path)
+
+    _spoken(tmp_path, _at(2026, 7, 29, 17, 12, 0), "the first thing")
+    _spoken(tmp_path, _at(2026, 7, 29, 18, 40, 0), "the second thing")
+
+    sitting = store.sitting(SOURCE, WEDNESDAY_EVENING)
+
+    assert [utterance.text for utterance in sitting.read()] == [
+        "the first thing",
+        "the second thing",
+    ]
+
+
+def test_a_session_with_no_transcript_left_reads_as_nothing(tmp_path):
+    """Its summary outlived its transcript, and an account is not raw material."""
+    store = _store(tmp_path)
+
+    _session(tmp_path, _at(2026, 7, 29, 17, 12, 0), transcript=False)
+    _spoken(tmp_path, _at(2026, 7, 29, 18, 40, 0), "what is left")
+
+    sitting = store.sitting(SOURCE, WEDNESDAY_EVENING)
+
+    assert [utterance.text for utterance in sitting.read()] == ["what is left"]
+
+
+def test_a_sitting_is_filed_under_the_name_it_was_given(tmp_path):
+    """Which is how a rewrite replaces the account instead of joining it."""
+    store = _store(tmp_path)
+    transcript = _transcript(tmp_path / "transcripts", "2026-07-29T21-05-00")
+
+    path = store.write(transcript, SUMMARY, "2026-07-29T17-12-00")
+
+    assert path.name == "2026-07-29T17-12-00.txt"
+    assert path.read_text(encoding="utf-8") == SUMMARY
 
 
 # ── retention ─────────────────────────────────

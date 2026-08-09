@@ -143,6 +143,34 @@ class Utterance:
         )
 
 
+def utterances_in(path: Path) -> list[Utterance]:
+    """
+    Everything one transcript holds, in the order it was spoken.
+
+    By path rather than through a `Transcript`, because a session other than the
+    one that just sealed is a name in a directory and nothing more: `summary`
+    reads a whole sitting back out of several of them, and only one of those was
+    ever handed over as an object.
+
+    A line that will not parse is skipped rather than raised on: one bad line
+    should cost one utterance, not the whole transcript.
+    """
+    if not path.is_file():
+        return []
+
+    utterances: list[Utterance] = []
+    with path.open(encoding="utf-8") as handle:
+        for number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            try:
+                utterances.append(Utterance.from_line(line))
+            except (ValueError, KeyError, TypeError) as exc:
+                logger.error("Skipping %s line %d: %s", path, number, exc)
+
+    return utterances
+
+
 def last_spoken(path: Path) -> datetime | None:
     """
     When the last thing in a transcript was said, or nothing if none of it was.
@@ -199,26 +227,8 @@ class Transcript:
         return self.utterances == 0
 
     def read(self) -> list[Utterance]:
-        """
-        Every utterance in the file, in the order it was spoken.
-
-        A line that will not parse is skipped rather than raised on: one bad
-        line should cost one utterance, not the whole transcript.
-        """
-        if not self.path.is_file():
-            return []
-
-        utterances: list[Utterance] = []
-        with self.path.open(encoding="utf-8") as handle:
-            for number, line in enumerate(handle, start=1):
-                if not line.strip():
-                    continue
-                try:
-                    utterances.append(Utterance.from_line(line))
-                except (ValueError, KeyError, TypeError) as exc:
-                    logger.error("Skipping %s line %d: %s", self.path, number, exc)
-
-        return utterances
+        """Every utterance in the file, in the order it was spoken."""
+        return utterances_in(self.path)
 
 
 class TranscriptSession:

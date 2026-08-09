@@ -10,6 +10,18 @@ it came from, and posted in a text channel. That is `handle_finished`, and it is
 the only tool that uses that moment: everything else here works on the utterance
 stream while a conversation is still going.
 
+What is written about is the **sitting** rather than the session, where a room is
+on a capture schedule. A window — `Wed 17:00-00:00` — is a stretch of clock
+somebody named, and a room empties and fills several times inside one: people
+leave, the bot is dragged next door, a pod restarts. Each of those is its own
+connection and its own transcript, and none of them is the evening. So a session
+that opened inside one occurrence of the window is summarized together with every
+other session filed inside it, under the name of the one that opened the sitting,
+and each seal rewrites that same account rather than filing another beside it.
+A session that opened outside every window is nobody's sitting and is written
+about on its own — a room put on the record by hand is a deliberate account of
+one conversation. See `summary.store.Sitting`.
+
 **Reading it back.** Somebody says "Miss Quote, what happened last session" and
 the bot tells them, out loud, having run the stored summary through a second
 prompt that turns a thing you read into a thing you say. That is
@@ -90,8 +102,8 @@ from miss_quote.audio.hold import DEFAULT_HOLD_VOLUME
 from miss_quote.config import SILENT_VOLUME, UNITY_VOLUME, transcript_cfg
 from miss_quote.llm import client as llm
 from miss_quote.summary import dialogue, prompts, when as clauses
-from miss_quote.config import MONITORED_CHANNELS_KEY, SCHEDULE_KEY
-from miss_quote.summary.store import Chain, SummaryStore
+from miss_quote.config import MONITORED_CHANNELS_KEY, SCHEDULE_KEY, file_cfg
+from miss_quote.summary.store import Chain, Sitting, SummaryStore
 from miss_quote.summary.when import When
 from miss_quote.tools.base import Finder, Tool, ToolContext
 from miss_quote.tools.tts import Tts
@@ -633,16 +645,31 @@ class Summary(Tool):
 
     async def handle_finished(self, transcript: Transcript) -> None:
         """
-        Summarize one sealed session, if it was in a channel anybody asked for.
+        Summarize what a sealed session was part of, if anybody asked for that room.
 
         The gate comes first and costs nothing: a channel nobody listed is not
-        read, not sent anywhere, and not written about. A session too short to
-        have been a conversation is dropped just after, because a summary of
-        four lines is longer than the four lines.
+        read, not sent anywhere, and not written about. A conversation too short
+        to have been one is dropped just after, because a summary of four lines
+        is longer than the four lines.
 
-        A failure anywhere costs the summary and nothing else. The transcript is
-        untouched and can be summarized again by hand, which is why nothing here
-        writes a partial result or posts one.
+        **What gets summarized is the sitting, not the session.** A room on a
+        capture schedule empties and fills several times in an evening, and each
+        of those is its own connection and its own transcript; what somebody
+        wants an account of is the evening. So a session that opened inside one
+        of the window's occurrences is summarized together with every other
+        session filed inside it, and the account is written under the name of the
+        one that opened the sitting — every seal rewrites that same file, and the
+        evening leaves one account rather than four overlapping ones. See
+        `Sitting`.
+
+        A session that opened outside every window is nobody's sitting and is
+        summarized on its own, which is what it was before any of this: a room
+        put on the record by hand is a deliberate account of one conversation,
+        and the sessions on either side of it were deliberately not kept.
+
+        A failure anywhere costs the summary and nothing else. The transcripts
+        are untouched and can be summarized again by hand, which is why nothing
+        here writes a partial result or posts one.
 
         The live feed comes down first, before the model is asked anything. A
         sealed session is the room having emptied, and what a feed would show
@@ -656,13 +683,76 @@ class Summary(Tool):
 
         await self._cleared(monitored)
 
-        utterances = transcript.read()
+        sitting = self._sitting(transcript)
+
+        if sitting is None:
+            await self._summarize(
+                transcript,
+                monitored,
+                transcript.read(),
+                transcript.path.stem,
+                transcript.opened,
+            )
+            return
+
+        if transcript.empty:
+            # Nothing reached disk, so the sitting holds exactly what it held
+            # before this session opened and its account already says it. Asking
+            # for the same paragraphs again is a completion nobody reads.
+            logger.debug(
+                "[%s] %s wrote nothing down, so the sitting is unchanged.",
+                self.server,
+                transcript.path.name,
+            )
+            return
+
+        await self._summarize(
+            transcript, monitored, sitting.read(), sitting.name, sitting.opened
+        )
+
+    def _sitting(self, transcript: Transcript) -> Sitting | None:
+        """
+        The window's worth of sessions this one is part of, if it is part of one.
+
+        Resolved through the same schedule the writer asked when it decided
+        whether to keep the session at all, rather than through a second copy of
+        the setting: which rooms are on the record and when is one list, and two
+        readings of it that could disagree is a room summarized as a sitting it
+        was never written down as part of.
+        """
+        schedule = file_cfg.schedule_for(
+            transcript.source.guild_id, transcript.source.channel
+        )
+
+        occurrence = schedule.occurrence(transcript.opened)
+        if occurrence is None:
+            return None
+
+        return self._store.sitting(transcript.source, occurrence)
+
+    async def _summarize(
+        self,
+        transcript: Transcript,
+        monitored: Monitored,
+        utterances: list[Utterance],
+        name: str,
+        opened: datetime,
+    ) -> None:
+        """
+        Write one account and put it where the channel can read it.
+
+        `name` is what it is filed as and `opened` is when it says it happened,
+        and neither is necessarily the sealed session's: an account of a sitting
+        is named for the session that opened it and dated from the same one, so
+        a room that has come and went all evening is not handed a summary headed
+        with the moment its last twenty minutes started.
+        """
         if len(utterances) < monitored.minimum_utterances:
             logger.info(
                 "[%s] %s had %d utterance(s), under the %d it takes to be worth "
                 "summarizing.",
                 self.server,
-                transcript.path.name,
+                name,
                 len(utterances),
                 monitored.minimum_utterances,
             )
@@ -671,25 +761,27 @@ class Summary(Tool):
         try:
             text = await llm.complete(monitored.prompt, dialogue.script(utterances))
         except llm.CompletionError as exc:
-            logger.error(
-                "[%s] Could not summarize %s: %s", self.server, transcript.path.name, exc
-            )
+            logger.error("[%s] Could not summarize %s: %s", self.server, name, exc)
             return
 
-        path = self._store.write(transcript, text)
+        path = self._store.write(transcript, text, name)
 
         logger.info(
             "📝 [%s] Summarized %s (%d utterances) into %s.",
             self.server,
-            transcript.path.name,
+            name,
             len(utterances),
             path or "nowhere",
         )
 
-        await self._post(transcript, monitored, text)
+        await self._post(transcript, monitored, text, opened)
 
     async def _post(
-        self, transcript: Transcript, monitored: Monitored, text: str
+        self,
+        transcript: Transcript,
+        monitored: Monitored,
+        text: str,
+        opened: datetime,
     ) -> None:
         """Put the summary where the channel can read it, if it asked for that."""
         if not monitored.posting:
@@ -697,7 +789,7 @@ class Summary(Tool):
 
         header = HEADER.format(
             channel=transcript.source.channel,
-            when=transcript.opened.strftime(HEADER_TIMESTAMP_FORMAT),
+            when=opened.strftime(HEADER_TIMESTAMP_FORMAT),
         )
 
         await self.announcer.post(

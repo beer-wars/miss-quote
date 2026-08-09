@@ -13,6 +13,12 @@ writing until everybody disconnects, however far past the end of the window that
 is. An evening does not stop being the evening at midnight, and a transcript cut
 off mid-conversation is worse than either keeping the whole thing or none of it.
 
+A window is also what says that several sessions were one sitting. It recurs
+weekly and a session belongs to a particular one of its occurrences — the
+Wednesday evening it opened in, rather than Wednesday evenings in general — which
+is what `summary` folds a room's comings and goings together by. See
+`Window.occurrence`.
+
 Only the writing down is scheduled. Speech is still transcribed outside a window
 and still handed to the tools that read one utterance at a time, so a fine is
 still announced and still counted; what the schedule decides is whether the
@@ -31,9 +37,10 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, time
+from datetime import date, datetime, time, timedelta
 
 DAYS_IN_A_WEEK = 7
+ONE_DAY = timedelta(days=1)
 
 # Monday first, so an index into this is what `datetime.weekday()` answers.
 DAY_NAMES = (
@@ -79,6 +86,30 @@ SCHEDULE_SETTING = "settings.transcripts.schedule"
 
 
 @dataclass(frozen=True)
+class Occurrence:
+    """
+    One window as it happened, on one date: the stretch of clock itself.
+
+    A window is a weekly recurrence and says nothing about which week. This is a
+    particular one of them, which is what answers whether two sessions were the
+    same sitting — and so what the `summary` tool folds together into one
+    account. See `Window.occurrence`.
+    """
+
+    start: datetime
+    end: datetime
+
+    def covers(self, moment: datetime) -> bool:
+        """
+        Whether a moment falls inside this occurrence.
+
+        Half-open on the same terms as the window it came from, so a session
+        opening exactly as one occurrence ends belongs to the next.
+        """
+        return self.start <= moment < self.end
+
+
+@dataclass(frozen=True)
 class Window:
     """One stretch of one day of the week, as a half-open interval."""
 
@@ -116,6 +147,33 @@ class Window:
             return clock >= self.start
 
         return weekday == (self.day + 1) % DAYS_IN_A_WEEK and clock < self.end
+
+    def occurrence(self, moment: datetime) -> Occurrence | None:
+        """
+        The particular stretch of clock this window is around a moment, if it
+        covers it at all.
+
+        Dated from the moment rather than from the calendar, so the answer is
+        the occurrence a session belongs to however long ago it was and whichever
+        side of midnight it landed. A window that wraps is dated from the day its
+        start falls on, which for a moment in the small hours is the day before.
+        """
+        if not self.covers(moment):
+            return None
+
+        day = moment.date()
+
+        if not self.wraps:
+            return Occurrence(_at(day, self.start, moment), _at(day, self.end, moment))
+
+        if moment.weekday() == self.day:
+            return Occurrence(
+                _at(day, self.start, moment), _at(day + ONE_DAY, self.end, moment)
+            )
+
+        return Occurrence(
+            _at(day - ONE_DAY, self.start, moment), _at(day, self.end, moment)
+        )
 
     def describe(self) -> str:
         return (
@@ -192,6 +250,41 @@ class Schedule:
 
         return any(window.covers(moment) for window in self.windows)
 
+    def occurrence(self, moment: datetime) -> Occurrence | None:
+        """
+        The stretch of clock the window covering a moment is, if one does.
+
+        What `covers` answers is whether a session is written down; this answers
+        which sitting it is part of, which is how the `summary` tool knows that
+        four sessions on a Wednesday evening are one thing to write about.
+
+        Nothing where no schedule was asked for. A deployment that keeps
+        everything has no windows to be inside, and reading that as one window
+        with no ends would make every session a channel ever had one sitting.
+
+        Windows that overlap are taken together, from the earliest start to the
+        latest end, so a moment covered by two is in one stretch rather than in
+        whichever of them the file happened to list first. Windows written back
+        to back do not overlap — the interval is half-open — and stay separate,
+        which is what `Wed 17:00-00:00` and `Thu 00:00-02:00` are asking for.
+        """
+        if not self.configured:
+            return None
+
+        covering = [
+            occurrence
+            for occurrence in (window.occurrence(moment) for window in self.windows)
+            if occurrence is not None
+        ]
+
+        if not covering:
+            return None
+
+        return Occurrence(
+            min(occurrence.start for occurrence in covering),
+            max(occurrence.end for occurrence in covering),
+        )
+
     def describe(self) -> str:
         return WINDOW_SEPARATOR.join(window.describe() for window in self.windows)
 
@@ -203,6 +296,11 @@ ALWAYS = Schedule()
 # What a room absent from `monitored_channels` gets, and what a schedule nothing
 # could be read out of falls back to; see `Schedule.empty`.
 NEVER = Schedule(configured=True)
+
+
+def _at(day: date, clock: time, moment: datetime) -> datetime:
+    """One time of day on one date, on the clock the moment was read against."""
+    return datetime.combine(day, clock, tzinfo=moment.tzinfo)
 
 
 def _window(entry: str, where: str, problems: list[str]) -> Window | None:

@@ -21,6 +21,14 @@ and a joke told fifteen times in five minutes is a denial of service on the
 conversation, so the announcement backs off toward `settings.fines.volume_floor`
 as somebody keeps earning them. See `RecentViolations`.
 
+Past a point, turning the sentence down is not enough and it stops being said at
+all. A speaker gets `settings.fines.dampen_after` fines read out in full inside
+`settings.fines.dampen_seconds`, and once that is spent a single-credit fine is
+the chime on its own — the room has heard the wording, and what is left to convey
+is that it happened. A fine worth more than one credit is always said in full,
+being a thing somebody has just done rather than the one the channel has heard
+all evening. Off unless a deployment asks for it. See `RecentAnnouncements`.
+
 For the same reason a violation earned while an announcement is already playing
 is counted and not announced. The speaker plays one clip at a time and returns
 when it is finished, so waiting for a turn would leave the channel working
@@ -117,6 +125,19 @@ NEVER_REPEATS = 0.0
 # A recall window of this or less never answers the question.
 NEVER_RECALLS = 0.0
 
+# The smallest budget of full announcements that is a budget at all. Below it a
+# deployment has not asked for any of this and every fine is said in full; at it,
+# a speaker's first single-credit fine in the window is already down to a chime.
+SMALLEST_BUDGET = 0
+
+# What one announcement takes out of that budget.
+ONE_ANNOUNCEMENT = 1
+
+# What the log calls each of the two, so a line about a fine says whether the
+# channel heard the sentence or only the flourish.
+ANNOUNCING = "announcing"
+CHIMING = "chiming"
+
 USER_FIELD = "user"
 CREDITS_FIELD = "credits"
 VIOLATIONS_FIELD = "violations"
@@ -153,20 +174,67 @@ PROBE_NAME = "someone"
 PROBE_WORD = "something"
 
 
-class RecentViolations:
+class Recent:
     """
-    How much somebody has sworn lately, and how loudly to say so.
+    What each speaker has done lately, as timestamps inside a sliding window.
 
     In memory only, and per tool instance, which is per server: one server's
     patience is not another's, and a tally that survives a restart is the
-    credits, not this. A `settings.fines.backoff_seconds` after their last one, a
-    speaker is back to being announced at whatever loudness the channel asked
-    for.
+    credits, not this.
 
     Timestamps rather than a count, because the window slides: a count would
     have to be reset on a schedule, and the reset would land mid-argument and
     hand somebody a fresh full-volume announcement for their fifteenth swear.
     Kept per user and pruned on the way past, so nothing has to sweep it.
+    """
+
+    def __init__(self, window_seconds: float) -> None:
+        self._window = window_seconds
+        self._seen: dict[int, list[float]] = {}
+
+    def count(self, user_id: int, now: float | None = None) -> int:
+        """Entries still inside the window, dropping the ones that have aged out."""
+        recent = self._recent(user_id, now)
+
+        if recent:
+            self._seen[user_id] = recent
+        else:
+            self._seen.pop(user_id, None)
+
+        return len(recent)
+
+    def record(self, user_id: int, times: int, now: float | None = None) -> None:
+        """Note something against a speaker, one timestamp each."""
+        moment = time.monotonic() if now is None else now
+        recent = self._recent(user_id, moment)
+        recent.extend([moment] * times)
+
+        self._seen[user_id] = recent
+
+    def _recent(self, user_id: int, now: float | None) -> list[float]:
+        """
+        A speaker's entries that are still inside the window.
+
+        Monotonic rather than wall clock, so a clock correction cannot make one
+        look like it happened in the future and stay in the window until it
+        arrives.
+        """
+        moment = time.monotonic() if now is None else now
+        cutoff = moment - self._window
+
+        return [seen for seen in self._seen.get(user_id, []) if seen > cutoff]
+
+
+class RecentViolations(Recent):
+    """
+    How much somebody has sworn lately, and how loudly to say so.
+
+    A `settings.fines.backoff_seconds` after their last one, a speaker is back
+    to being announced at whatever loudness the channel asked for.
+
+    Every forbidden word is recorded, on the same terms as the fine: somebody who
+    strings four together has earned four credits and four steps of backoff,
+    however few announcements it took to say so.
     """
 
     def __init__(
@@ -175,12 +243,11 @@ class RecentViolations:
         step: float | None = None,
         floor: float | None = None,
     ) -> None:
-        self._window = (
+        super().__init__(
             morality_cfg.backoff_seconds if window_seconds is None else window_seconds
         )
         self._step = morality_cfg.backoff_step if step is None else step
         self._floor = morality_cfg.volume_floor if floor is None else floor
-        self._seen: dict[int, list[float]] = {}
 
     def scale(self, user_id: int, now: float | None = None) -> float:
         """
@@ -213,43 +280,51 @@ class RecentViolations:
 
         return bool(seen) and moment - max(seen) <= within
 
-    def count(self, user_id: int, now: float | None = None) -> int:
-        """Violations still inside the window, dropping the ones that have aged out."""
-        recent = self._recent(user_id, now)
 
-        if recent:
-            self._seen[user_id] = recent
-        else:
-            self._seen.pop(user_id, None)
+class RecentAnnouncements(Recent):
+    """
+    How many fines a speaker has been read in full lately, and whether the
+    window still owes them another.
 
-        return len(recent)
+    The backoff turns a repeated announcement down; this stops making it. Both
+    are the same complaint — the joke is the recognition and the room has had it
+    — and a quarter-volume sentence is still a sentence read over the top of
+    whatever the channel was talking about.
 
-    def record(self, user_id: int, violations: int, now: float | None = None) -> None:
+    Only what was said counts. A fine that went unannounced because something
+    else was playing cost the conversation nothing, and spending the budget on it
+    would dampen the next one on the strength of a sentence nobody heard.
+
+    Off unless a deployment asks: a `settings.fines.dampen_after` below
+    `SMALLEST_BUDGET` never reports a speaker as spent, which is every fine in
+    full and no window kept.
+    """
+
+    def __init__(
+        self, window_seconds: float | None = None, budget: int | None = None
+    ) -> None:
+        super().__init__(
+            morality_cfg.dampen_seconds if window_seconds is None else window_seconds
+        )
+        self._budget = morality_cfg.dampen_after if budget is None else budget
+
+    @property
+    def dampening(self) -> bool:
+        """Whether the deployment asked for any of this."""
+        return self._budget >= SMALLEST_BUDGET
+
+    def spent(self, user_id: int, now: float | None = None) -> bool:
         """
-        Note violations against a speaker, one timestamp each.
+        Whether a speaker has already heard every full fine the window owes them.
 
-        Each forbidden word counts, on the same terms as the fine: somebody who
-        strings four together has earned four credits and four steps of backoff,
-        however few announcements it took to say so.
+        Read before the announcement being decided on is recorded, on the same
+        terms as `RecentViolations.scale`, so a budget of one is one fine said in
+        full rather than none.
         """
-        moment = time.monotonic() if now is None else now
-        recent = self._recent(user_id, moment)
-        recent.extend([moment] * violations)
+        if not self.dampening:
+            return False
 
-        self._seen[user_id] = recent
-
-    def _recent(self, user_id: int, now: float | None) -> list[float]:
-        """
-        A speaker's violations that are still inside the window.
-
-        Monotonic rather than wall clock, so a clock correction cannot make a
-        violation look like it happened in the future and stay in the window
-        until it arrives.
-        """
-        moment = time.monotonic() if now is None else now
-        cutoff = moment - self._window
-
-        return [seen for seen in self._seen.get(user_id, []) if seen > cutoff]
+        return self.count(user_id, now) >= self._budget
 
 
 class VerbalMorality(Tool):
@@ -288,6 +363,7 @@ class VerbalMorality(Tool):
         )
         self._chime = _named(config.get(CHIME_KEY))
         self._recent = RecentViolations()
+        self._announced = RecentAnnouncements()
         self._fined: dict[int, tuple[str, float]] = {}
         self._announcing = False
 
@@ -343,6 +419,19 @@ class VerbalMorality(Tool):
 
         self._chime = speech.locate(self._chime)
 
+        if self._announced.dampening and self._chime is None:
+            # A dampened fine is the chime and nothing else, so a server that
+            # asked for the dampening without leaving a clip to dampen to has
+            # asked for silence. Whether that is what it meant is its own
+            # business; not being told is not.
+            logger.warning(
+                "[%s] Fines are dampened after %d in the window and there is no "
+                "'%s' to dampen them to, so a dampened fine will say nothing.",
+                self.server,
+                morality_cfg.dampen_after,
+                CHIME_KEY,
+            )
+
         names = sorted(set(self.users.values()))
         if not names:
             logger.debug(
@@ -388,6 +477,12 @@ class VerbalMorality(Tool):
         full volume and in the first wording. The tally is charged whether or not
         anything is said: what somebody owes is not a function of how loudly, or
         whether, they were told about it.
+
+        A speaker who has spent their budget of full announcements gets the chime
+        and no words for a single-credit fine, which is `_dampened`. It is the
+        backoff's argument carried to its end — the channel knows the sentence,
+        and past a point the flourish is the whole of what a fine still has to
+        say. Only a fine that is announced spends any of that budget.
 
         An utterance with nothing to fine in it is where the recall is looked
         for, so a sentence that both asks and offends is fined and nothing else.
@@ -436,11 +531,16 @@ class VerbalMorality(Tool):
             )
             return
 
+        dampened = self._dampened(utterance.user_id, len(offences))
+        if not dampened:
+            self._announced.record(utterance.user_id, ONE_ANNOUNCEMENT)
+
         logger.info(
-            "🚨 [%s] %s said %s; announcing a fine of %s at %d%% volume (%s).",
+            "🚨 [%s] %s said %s; %s a fine of %s at %d%% volume (%s).",
             self.server,
             utterance.user,
             said,
+            CHIMING if dampened else ANNOUNCING,
             fine,
             round(scale * PERCENT),
             standing,
@@ -448,14 +548,32 @@ class VerbalMorality(Tool):
 
         self._announcing = True
         try:
-            await speech.play(
-                session.source,
-                self._wording(utterance.user, len(offences), repeat),
-                scale=scale,
-                chime=self._chime,
-            )
+            if dampened:
+                await speech.play_chime(session.source, self._chime, scale=scale)
+            else:
+                await speech.play(
+                    session.source,
+                    self._wording(utterance.user, len(offences), repeat),
+                    scale=scale,
+                    chime=self._chime,
+                )
         finally:
             self._announcing = False
+
+    def _dampened(self, user_id: int, offences: int) -> bool:
+        """
+        Whether this fine is the chime on its own.
+
+        Only ever a single-credit one. Somebody who strung several together in
+        one breath has done something the channel has not heard all evening, and
+        the sentence naming what it cost is the whole of the joke; what the
+        budget exists to stop is the same fine, at length, for the fifteenth
+        time.
+
+        Read before the announcement is recorded, so the budget is what a
+        speaker has already heard rather than what they are about to.
+        """
+        return offences == SINGLE_OFFENCE and self._announced.spent(user_id)
 
     # ── what was that ─────────────────────────────
 

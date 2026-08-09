@@ -9,6 +9,17 @@ path segment, and a session that took an ordinal to avoid a collision keeps it
 here — two sessions that could not share a transcript name cannot share a
 summary name either.
 
+**One sitting is not always one session either**, and that is a different
+question with a different answer. A room on a capture schedule is written down
+for a stretch of clock somebody named — `Wed 17:00-00:00` — and the sessions
+filed inside one occurrence of it are one thing to write about, however many
+times the room emptied and refilled. That is a `Sitting`, and it is what
+`summary` writes its account from: every seal inside the window rewrites the same
+file, named for the session that opened the sitting, so the evening leaves one
+account rather than four overlapping ones. A session opened outside every window
+— a room put on the record by hand — is nobody's sitting and is summarized on its
+own.
+
 **One evening is not always one session.** A transcript is one connection to a
 voice channel, and `resume_window_seconds` is a handful of seconds — long enough
 to ride out a client dropping, not long enough for a pod restart or for a room
@@ -47,12 +58,15 @@ from zoneinfo import ZoneInfo
 
 from miss_quote.config import summary_cfg, transcript_cfg
 from miss_quote.summary.when import LATEST, When
+from miss_quote.transcript.schedule import Occurrence
 from miss_quote.transcript.writer import (
     Source,
     Transcript,
+    Utterance,
     date_from_filename,
     last_spoken,
     opened_from_filename,
+    utterances_in,
 )
 from miss_quote.utils.logging import get_logger
 
@@ -104,6 +118,60 @@ class Session:
             return self.opened
 
         return last_spoken(self.transcript) or self.opened
+
+    def read(self) -> list[Utterance]:
+        """
+        Everything said in this session, or nothing where there is no transcript.
+
+        A session whose transcript has been pruned out from under its summary is
+        a session nothing can be re-read from. What it left behind is the
+        account already written, which is a different thing from the raw
+        material and is not substituted here.
+        """
+        if self.transcript is None:
+            return []
+
+        return utterances_in(self.transcript)
+
+
+@dataclass(frozen=True)
+class Sitting:
+    """
+    One occurrence of a capture window, and every session filed inside it.
+
+    A room on a schedule empties and fills several times in an evening — people
+    leave, the bot is dragged elsewhere, a pod restarts — and each of those is
+    its own connection and its own transcript. None of them is the evening. What
+    the window says is which of them belong together, so the account is written
+    from all of them and filed under the name of the one that opened the sitting.
+
+    Sessions are ordered oldest first, so what a model is handed reads in the
+    order the room said it.
+    """
+
+    sessions: tuple[Session, ...]
+
+    @property
+    def opened(self) -> datetime:
+        """When the sitting started, which is when its first session did."""
+        return self.sessions[0].opened
+
+    @property
+    def name(self) -> str:
+        """
+        What the sitting is filed as, which is what its first session is called.
+
+        Stable as the sitting grows: every seal inside the window writes the same
+        file, so a room that came and went four times leaves one account rather
+        than four overlapping ones.
+        """
+        return self.sessions[0].name
+
+    def read(self) -> list[Utterance]:
+        """The whole sitting, in the order it was spoken."""
+        return [
+            utterance for session in self.sessions for utterance in session.read()
+        ]
 
 
 @dataclass(frozen=True)
@@ -178,21 +246,27 @@ class SummaryStore:
     def retention_enabled(self) -> bool:
         return self._retention_days >= 1
 
-    def path_for(self, transcript: Transcript) -> Path:
+    def path_for(self, transcript: Transcript, name: str | None = None) -> Path:
         """
         Where one transcript's summary belongs.
 
         Named from the transcript's own stem rather than from the clock, so the
         pairing survives a summary written days late — by a backfill, or by a
         deployment that was pointed at a working endpoint after the fact.
+
+        `name` files it under some other session instead, which is how every seal
+        inside one capture window writes the same account rather than a fresh one
+        beside the last. See `Sitting.name`.
         """
         return (
             self._directory
             / transcript.source.relative_directory
-            / f"{transcript.path.stem}{summary_cfg.filename_suffix}"
+            / f"{name or transcript.path.stem}{summary_cfg.filename_suffix}"
         )
 
-    def write(self, transcript: Transcript, text: str) -> Path | None:
+    def write(
+        self, transcript: Transcript, text: str, name: str | None = None
+    ) -> Path | None:
         """
         Store one summary, reporting where it went.
 
@@ -200,8 +274,11 @@ class SummaryStore:
         through leaves no half-written summary to be read back as a whole one.
         A directory that cannot be written to costs the summary and is reported;
         the transcript it came from is untouched and can be summarized again.
+
+        `name` is `path_for`'s, and is what makes a rewrite a rewrite: an account
+        of a sitting replaces the one written when the sitting was shorter.
         """
-        path = self._path_prepared(transcript)
+        path = self._path_prepared(transcript, name)
         if path is None:
             return None
 
@@ -264,6 +341,30 @@ class SummaryStore:
     def latest(self, source: Source, gap: timedelta) -> Chain | None:
         """The most recent evening in one channel, if it has had any."""
         return self.find(source, LATEST, gap)
+
+    def sitting(self, source: Source, occurrence: Occurrence) -> Sitting | None:
+        """
+        Every session one channel filed inside one occurrence of a window.
+
+        Membership is decided by when a session **opened**, which is the same
+        moment the schedule was asked about when it decided whether to write that
+        session down at all. A window says when a sitting may start rather than
+        how long it may run, so the session that opened at twenty to midnight and
+        sealed at one belongs to the evening it began in — and that is usually
+        the longest part of it.
+
+        Both trees, on `_sessions`' terms: a session too short to have been worth
+        summarizing still said something, and a sitting that skipped it would be
+        an account with a hole in the middle. Nothing where the window produced
+        nothing, which is a window nobody sat through.
+        """
+        inside = tuple(
+            session
+            for session in self._sessions(source)
+            if occurrence.covers(session.opened)
+        )
+
+        return Sitting(sessions=inside) if inside else None
 
     def prune(self) -> list[Path]:
         """
@@ -341,9 +442,11 @@ class SummaryStore:
 
         return sorted(sessions, key=lambda session: (session.opened, session.name))
 
-    def _path_prepared(self, transcript: Transcript) -> Path | None:
+    def _path_prepared(
+        self, transcript: Transcript, name: str | None = None
+    ) -> Path | None:
         """Where a summary goes, with somewhere to put it."""
-        path = self.path_for(transcript)
+        path = self.path_for(transcript, name)
 
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
