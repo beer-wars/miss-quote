@@ -25,6 +25,7 @@ from miss_quote.tools.quotes import (
     ADDITIONAL_QUOTES_KEY,
     ANNOUNCEMENT_KEY,
     ANSWER_SECONDS_KEY,
+    BACKOFF_SECONDS_KEY,
     CERTAIN,
     CHANCE_KEY,
     DEFAULT_ANNOUNCEMENT,
@@ -1397,6 +1398,48 @@ def test_the_window_comes_from_the_deployment(monkeypatch):
     )
 
     assert RecentQuotes().window == SHORT_WINDOW
+
+
+def test_a_server_sets_its_own_window(quotes_file, speaker):
+    """One room says the same six things all night and the next one does not."""
+    tool = _tool(speaker, config={BACKOFF_SECONDS_KEY: SHORT_WINDOW})
+
+    assert tool._recent.window == SHORT_WINDOW
+
+
+def test_a_server_that_says_nothing_gets_the_deployment_window(
+    quotes_file, speaker, monkeypatch
+):
+    monkeypatch.setattr(
+        "miss_quote.tools.quotes.quotes_cfg", replace(quotes_cfg, backoff_seconds=SHORT_WINDOW)
+    )
+
+    assert _tool(speaker)._recent.window == SHORT_WINDOW
+
+
+def test_a_server_window_wins_over_the_deployment(quotes_file, speaker, monkeypatch):
+    monkeypatch.setattr(
+        "miss_quote.tools.quotes.quotes_cfg", replace(quotes_cfg, backoff_seconds=SHORT_WINDOW)
+    )
+    tool = _tool(speaker, config={BACKOFF_SECONDS_KEY: NO_BACKOFF})
+
+    assert tool._recent.window == NO_BACKOFF
+
+
+async def test_a_server_with_no_backoff_answers_every_time(
+    quotes_file, speech, speaker
+):
+    tool = _tool(speaker, config={BACKOFF_SECONDS_KEY: NO_BACKOFF})
+
+    await _hear(tool, TRIGGER)
+    await _hear(tool, TRIGGER)
+
+    assert speech.asked == [QUOTE, QUOTE]
+
+
+def test_a_window_that_is_not_a_number_will_not_start(quotes_file, speaker):
+    with pytest.raises(ValueError, match=BACKOFF_SECONDS_KEY):
+        _tool(speaker, config={BACKOFF_SECONDS_KEY: "five minutes"})
 
 
 # ── answering only some of it ─────────────────────

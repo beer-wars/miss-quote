@@ -202,6 +202,50 @@ def test_the_dampening_window_defaults_to_an_hour(monkeypatch, tmp_path) -> None
     assert reloaded.morality_cfg.dampen_seconds == 3600.0
 
 
+def test_a_server_overrides_only_what_it_names(monkeypatch, tmp_path) -> None:
+    """The deployment's answer stands for everything the server left out."""
+    reloaded = _reload_with_setting(monkeypatch, tmp_path, "fines", "recall_seconds", 45)
+    fines = reloaded.morality_cfg.overridden({"dampen_after": 3})
+
+    assert fines.dampen_after == 3
+    assert fines.recall_seconds == 45.0
+
+
+def test_a_server_backoff_percent_is_read_as_a_percentage(monkeypatch, tmp_path) -> None:
+    """A percentage is what somebody writes, wherever they write it."""
+    reloaded = _reload_without_settings(monkeypatch, tmp_path)
+
+    assert reloaded.morality_cfg.overridden({"backoff_percent": 20}).backoff_step == 0.2
+
+
+def test_a_server_volume_floor_is_held_between_silence_and_unity(
+    monkeypatch, tmp_path
+) -> None:
+    """The clamps are the fields' own, wherever the value came from."""
+    reloaded = _reload_without_settings(monkeypatch, tmp_path)
+
+    assert reloaded.morality_cfg.overridden({"volume_floor": 4}).volume_floor == (
+        reloaded.UNITY_VOLUME
+    )
+    assert reloaded.morality_cfg.overridden({"volume_floor": -2}).volume_floor == (
+        reloaded.SILENT_VOLUME
+    )
+
+
+def test_a_server_setting_that_is_not_a_number_is_refused(monkeypatch, tmp_path) -> None:
+    """
+    Raised on rather than defaulted past, unlike the same name in the settings.
+
+    A value in the settings block is read before any server exists; one in a
+    tool's config is that server electing into something, and ignoring a typo
+    would leave one channel wondering why it sounds like the other one.
+    """
+    reloaded = _reload_without_settings(monkeypatch, tmp_path)
+
+    with pytest.raises(ValueError, match="repeat_seconds"):
+        reloaded.morality_cfg.overridden({"repeat_seconds": "a moment"})
+
+
 def test_the_currency_defaults_to_credits(monkeypatch, tmp_path) -> None:
     reloaded = _reload_without_settings(monkeypatch, tmp_path)
 

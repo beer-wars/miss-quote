@@ -82,6 +82,12 @@ settings:
 
   # How a fine from `verbal-morality` is announced. What one is worth is the
   # scoreboard's business, above.
+  #
+  # These are the deployment's answer, and what a server that says nothing
+  # gets. A server writes any of them under its own `verbal-morality` config
+  # instead, where it wins — so two servers wanting the same numbers write them
+  # once, here. A value written per server that will not parse stops that tool
+  # rather than falling back: it is that server electing into something.
   fines:
     # How soon after being fined a speaker is told they are "also fined" rather
     # than hearing the whole sentence again. 0 turns the second wording off.
@@ -135,6 +141,10 @@ settings:
 
   # The `quotes` tool, for every server that enables it. The triggers and the
   # lines themselves are a YAML file at QUOTES_FILE.
+  #
+  # The deployment's answer, which a server may write under its own `quotes`
+  # config instead: one room says the same six things all night and the next
+  # one does not.
   quotes:
     # How long a trigger stays spent after it fires, so a channel that keeps
     # saying the same word hears the line once. 0, or below, answers every
@@ -309,6 +319,12 @@ servers:
           # where it was heard, interruption and all.
           #
           # quiet_seconds: 1
+
+          # How long a trigger stays spent after it fires, for this server
+          # alone. Left out, it is settings.quotes.backoff_seconds. 0, or
+          # below, answers every trigger every time.
+          #
+          # backoff_seconds: 300
 
           # The odds a trigger is answered at all, between 0 and 1. Everything
           # by default; at a half a phrase comes back about every other time it
@@ -806,7 +822,7 @@ servers:
           # announcement: "{user}, you are fined {credits} for {violations} of the verbal morality statute."
 
           # Optional, and the same placeholders. Said instead when the same
-          # speaker is fined again inside settings.fines.repeat_seconds —
+          # speaker is fined again inside `repeat_seconds`, below —
           # reading the whole sentence out again sounds like a bot that has lost
           # track of what it just said.
           #
@@ -815,8 +831,8 @@ servers:
           # How somebody asks what they were just fined for, and what they are
           # told. The announcement above names the fine and never the word, so
           # this is the only way to hear it. Answered only inside
-          # settings.fines.recall_seconds, which is the whole gate: outside it
-          # the question is somebody talking to the room.
+          # `recall_seconds`, below, which is the whole gate: outside it the
+          # question is somebody talking to the room.
           #
           # The triggers REPLACE the ones below rather than adding to them, and
           # `{user}` and `{word}` are the only placeholders the answer has.
@@ -832,6 +848,24 @@ servers:
           # the only format there is here, so writing it out said nothing.
           #
           # chime: chime
+
+          # Any of settings.fines, for this server alone. What is written here
+          # wins over the deployment-wide block above, and what is left out is
+          # whatever that block says — so a room with a shorter fuse than the
+          # rest of the deployment names only the line it disagrees about.
+          #
+          # Unlike the settings block, a value here that will not parse stops
+          # this tool rather than falling back to a default: writing one is this
+          # server electing into something, and a typo quietly ignored leaves
+          # one channel wondering why it sounds like the other one.
+          #
+          # repeat_seconds: 5
+          # recall_seconds: 10
+          # backoff_seconds: 300
+          # backoff_percent: 5
+          # volume_floor: 0.25
+          # dampen_after: 1
+          # dampen_seconds: 300
 
   876543210987654321:
     alias: second-server

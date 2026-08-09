@@ -163,6 +163,12 @@ TIE_SECONDS_KEY = "tie_seconds"
 DEFAULT_ANSWER_SECONDS = 10.0
 DEFAULT_TIE_SECONDS = 1.0
 
+# How long a trigger stays spent after it fires. Written here as well as in
+# `settings.quotes`, which is the deployment's answer and what a server that
+# says nothing gets: one room says the same six things all night and the next
+# one does not, and neither has to be the whole deployment's business.
+BACKOFF_SECONDS_KEY = "backoff_seconds"
+
 # How long whoever set a line off has to go quiet before it is said.
 #
 # An ASR returns utterances rather than sentences and splits wherever the
@@ -568,7 +574,13 @@ class Quotes(Tool):
             _added(self.server, config.get(ADDITIONAL_QUOTES_KEY)),
         )
         self._triggers = pattern(self._quotes)
-        self._recent = RecentQuotes()
+        self._recent = RecentQuotes(
+            _seconds(
+                BACKOFF_SECONDS_KEY,
+                config.get(BACKOFF_SECONDS_KEY),
+                quotes_cfg.backoff_seconds,
+            )
+        )
         self._window = _seconds(
             ANSWER_SECONDS_KEY, config.get(ANSWER_SECONDS_KEY), DEFAULT_ANSWER_SECONDS
         )

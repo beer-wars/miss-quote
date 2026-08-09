@@ -1067,6 +1067,84 @@ def test_the_dampener_reads_its_budget_and_window_from_the_deployment():
     assert announced._window == morality_cfg.dampen_seconds
 
 
+# ── what one server asks for ──────────────────────
+
+
+async def test_a_server_sets_its_own_dampening(monkeypatch, speech, speaker, chime):
+    """One room's patience is not another's, and neither is the deployment's."""
+    _dampening(monkeypatch, NEVER_DAMPENS)
+    tool = _tool(
+        speaker, {"words": WORDS, "chime": chime, "dampen_after": NO_FULL_FINES}
+    )
+
+    await _hear(tool, FORBIDDEN)
+
+    assert speech.asked == []
+    assert speaker.played[0][1] == CHIME_AUDIO
+
+
+async def test_a_server_that_says_nothing_gets_the_deployment_setting(
+    monkeypatch, speech, speaker, chime
+):
+    _dampening(monkeypatch, NO_FULL_FINES)
+    tool = _tool(speaker, {"words": WORDS, "chime": chime})
+
+    await _hear(tool, FORBIDDEN)
+
+    assert speech.asked == []
+
+
+async def test_a_server_setting_wins_over_the_deployment(
+    monkeypatch, speech, speaker, chime
+):
+    _dampening(monkeypatch, NO_FULL_FINES)
+    tool = _tool(
+        speaker, {"words": WORDS, "chime": chime, "dampen_after": ONE_FULL_FINE}
+    )
+
+    await _hear(tool, FORBIDDEN)
+    await _hear(tool, FORBIDDEN)
+
+    assert len(speech.asked) == 1
+    assert speaker.played[-1][1] == CHIME_AUDIO
+
+
+async def test_a_server_sets_how_far_its_fines_back_off(speech, speaker):
+    """A percent of its own, so here one violation is the whole of the backoff."""
+    tool = _tool(
+        speaker, {"words": WORDS, "backoff_percent": 100, "volume_floor": 0.5}
+    )
+
+    await _hear(tool, FORBIDDEN)
+    await _hear(tool, FORBIDDEN)
+
+    assert speaker.scales == [UNITY_VOLUME, 0.5]
+
+
+async def test_a_server_sets_its_own_repeat_window(speech, speaker):
+    tool = _tool(speaker, {"words": WORDS, "repeat_seconds": 0})
+
+    await _hear(tool, FORBIDDEN)
+    await _hear(tool, FORBIDDEN)
+
+    assert "you are also fined" not in speech.asked[1]
+
+
+async def test_a_server_sets_its_own_recall_window(speech, speaker):
+    tool = _tool(speaker, {"words": WORDS, "recall_seconds": 0})
+
+    await _hear(tool, FORBIDDEN)
+    await _hear(tool, ASKING)
+
+    assert len(speaker.played) == 1
+
+
+async def test_a_setting_that_is_not_a_number_will_not_start(speech, speaker):
+    """A server that wrote a window down meant something by it."""
+    with pytest.raises(ValueError, match="dampen_after"):
+        _tool(speaker, {"words": WORDS, "dampen_after": "in a bit"})
+
+
 # ── the repeat wording ────────────────────────────
 
 
