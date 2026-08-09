@@ -29,6 +29,7 @@ from miss_quote.tools.verbal_morality import (
     DEFAULT_RECALL_ANNOUNCEMENT,
     DEFAULT_REPEAT_ANNOUNCEMENT,
     REPEATED_FINE,
+    RecentAnnouncements,
     RecentViolations,
     VerbalMorality,
 )
@@ -56,6 +57,12 @@ BACKOFF_STEP = morality_cfg.backoff_step
 BACKOFF_WINDOW = morality_cfg.backoff_seconds
 REPEAT_WINDOW = morality_cfg.repeat_seconds
 RECALL_WINDOW = morality_cfg.recall_seconds
+DAMPEN_WINDOW = morality_cfg.dampen_seconds
+
+# Budgets of full announcements, as a deployment would set them.
+ONE_FULL_FINE = 1
+NO_FULL_FINES = 0
+NEVER_DAMPENS = -1
 
 # How somebody asks what they were just fined for.
 ASKING = "What did I say?"
@@ -819,6 +826,245 @@ def test_the_backoff_reads_its_step_and_window_from_the_deployment():
 
     assert recent._step == morality_cfg.backoff_step
     assert recent._window == morality_cfg.backoff_seconds
+
+
+# ── dampened fines ────────────────────────────────
+
+
+def _dampening(monkeypatch, after: int, window: float = DAMPEN_WINDOW) -> None:
+    """
+    What a speaker is read in full before their fines drop to the chime.
+
+    Set before the tool is built, because the budget is read where the tool is:
+    a deployment does not change its mind between two utterances.
+    """
+    monkeypatch.setattr(
+        verbal_morality,
+        "morality_cfg",
+        replace(morality_cfg, dampen_after=after, dampen_seconds=window),
+    )
+
+
+async def test_nothing_is_dampened_unless_the_deployment_asks(speech, speaker, chime):
+    """The default is every fine in full, which is what the tool always did."""
+    tool = _tool(speaker, {"words": WORDS, "chime": chime})
+
+    await _hear(tool, FORBIDDEN)
+    await _hear(tool, FORBIDDEN)
+    await _hear(tool, FORBIDDEN)
+
+    assert len(speech.asked) == 3
+
+
+async def test_a_fine_past_the_budget_is_the_chime_on_its_own(
+    monkeypatch, speech, speaker, chime
+):
+    _dampening(monkeypatch, ONE_FULL_FINE)
+    tool = _tool(speaker, {"words": WORDS, "chime": chime})
+
+    await _hear(tool, FORBIDDEN)
+    await _hear(tool, FORBIDDEN)
+
+    _, spoken = speaker.played[1]
+    assert spoken == CHIME_AUDIO
+
+
+async def test_a_dampened_fine_is_not_rendered(monkeypatch, speech, speaker, chime):
+    """Nothing is going to say it; paying a synthesizer for it would be waste."""
+    _dampening(monkeypatch, ONE_FULL_FINE)
+    tool = _tool(speaker, {"words": WORDS, "chime": chime})
+
+    await _hear(tool, FORBIDDEN)
+    await _hear(tool, FORBIDDEN)
+
+    assert len(speech.asked) == 1
+
+
+async def test_the_budget_is_what_a_speaker_has_already_heard(
+    monkeypatch, speech, speaker, chime
+):
+    """A budget of two is two fines said in full, and the third is the chime."""
+    _dampening(monkeypatch, 2)
+    tool = _tool(speaker, {"words": WORDS, "chime": chime})
+
+    await _hear(tool, FORBIDDEN)
+    await _hear(tool, FORBIDDEN)
+    await _hear(tool, FORBIDDEN)
+
+    assert len(speech.asked) == 2
+    assert speaker.played[-1][1] == CHIME_AUDIO
+
+
+async def test_a_budget_of_nothing_dampens_the_first_fine(
+    monkeypatch, speech, speaker, chime
+):
+    """Which is a server that wants the flourish and never the sentence."""
+    _dampening(monkeypatch, NO_FULL_FINES)
+    tool = _tool(speaker, {"words": WORDS, "chime": chime})
+
+    await _hear(tool, FORBIDDEN)
+
+    assert speech.asked == []
+    assert speaker.played[0][1] == CHIME_AUDIO
+
+
+async def test_a_multi_credit_fine_is_always_said_in_full(
+    monkeypatch, speech, speaker, chime
+):
+    """Several in one breath is not the fine the channel has heard all evening."""
+    _dampening(monkeypatch, NO_FULL_FINES)
+    tool = _tool(speaker, {"words": WORDS, "chime": chime})
+
+    await _hear(tool, f"{FORBIDDEN} and {ALSO_FORBIDDEN}")
+
+    assert "2 credits" in speech.asked[0]
+
+
+async def test_a_multi_credit_fine_spends_the_budget(
+    monkeypatch, speech, speaker, chime
+):
+    """What the budget meters is whole sentences, whatever earned one."""
+    _dampening(monkeypatch, ONE_FULL_FINE)
+    tool = _tool(speaker, {"words": WORDS, "chime": chime})
+
+    await _hear(tool, f"{FORBIDDEN} and {ALSO_FORBIDDEN}")
+    await _hear(tool, FORBIDDEN)
+
+    assert len(speech.asked) == 1
+    assert speaker.played[-1][1] == CHIME_AUDIO
+
+
+async def test_the_budget_is_per_speaker(monkeypatch, speech, speaker, chime):
+    _dampening(monkeypatch, ONE_FULL_FINE)
+    tool = _tool(speaker, {"words": WORDS, "chime": chime})
+
+    await _hear(tool, FORBIDDEN)
+    await _hear(tool, FORBIDDEN)
+    await _hear(tool, FORBIDDEN, user=OTHER_SPEAKER, user_id=OTHER_SPEAKER_ID)
+
+    assert speaker.played[-1][1] == CHIME_AUDIO + speech.asked[-1]
+
+
+async def test_a_dampened_fine_is_still_counted(
+    monkeypatch, speech, speaker, chime, credits
+):
+    """What somebody owes is not a function of how much of it was read out."""
+    _dampening(monkeypatch, NO_FULL_FINES)
+    tool = _tool(speaker, {"words": WORDS, "chime": chime})
+
+    await _hear(tool, FORBIDDEN)
+    await _hear(tool, FORBIDDEN)
+
+    assert credits.total(SERVER_ALIAS, SPEAKER_ID) == -2
+
+
+async def test_a_dampened_fine_still_counts_toward_the_backoff(
+    monkeypatch, speech, speaker, chime
+):
+    _dampening(monkeypatch, NO_FULL_FINES)
+    tool = _tool(speaker, {"words": WORDS, "chime": chime})
+
+    await _hear(tool, FORBIDDEN)
+    await _hear(tool, FORBIDDEN)
+
+    assert speaker.scales[-1] < UNITY_VOLUME
+
+
+async def test_a_dampened_fine_can_still_be_asked_about(
+    monkeypatch, speech, speaker, chime
+):
+    """The word is the one thing the chime cannot convey, so the question stands."""
+    _dampening(monkeypatch, NO_FULL_FINES)
+    tool = _tool(speaker, {"words": WORDS, "chime": chime})
+
+    await _hear(tool, FORBIDDEN)
+    await _hear(tool, ASKING)
+
+    assert speech.asked[-1] == f"{SPEAKER}, you said {FORBIDDEN}."
+
+
+async def test_a_dampened_fine_with_no_chime_says_nothing(
+    monkeypatch, speech, speaker
+):
+    """A server that asked for the dampening and left nothing to dampen to."""
+    _dampening(monkeypatch, NO_FULL_FINES)
+    tool = _tool(speaker)
+
+    await _hear(tool, FORBIDDEN)
+
+    assert speaker.played == []
+    assert speech.asked == []
+
+
+async def test_a_dampener_with_no_chime_is_reported_at_startup(
+    monkeypatch, speech, speaker, caplog
+):
+    _dampening(monkeypatch, ONE_FULL_FINE)
+    tool = _tool(speaker)
+
+    await tool.prewarm()
+
+    assert "dampened" in caplog.text
+
+
+async def test_a_fine_that_went_unsaid_does_not_spend_the_budget(monkeypatch, speech):
+    """Dampening the next one on the strength of a sentence nobody heard."""
+    _dampening(monkeypatch, 2)
+    speaker = BlockingSpeaker()
+    tool = _tool(speaker)
+    playing = asyncio.create_task(_hear(tool, FORBIDDEN))
+    await speaker.playing.wait()
+
+    await _hear(tool, FORBIDDEN)
+    speaker.finish.set()
+    await playing
+
+    await _hear(tool, FORBIDDEN)
+
+    assert len(speech.asked) == 2
+
+
+def test_a_speaker_inside_the_budget_is_not_spent():
+    announced = RecentAnnouncements(budget=ONE_FULL_FINE)
+
+    assert not announced.spent(SPEAKER_ID)
+
+
+def test_a_full_fine_stops_counting_once_the_window_has_passed():
+    """The budget refills as it was spent, rather than at the top of an hour."""
+    announced = RecentAnnouncements(budget=ONE_FULL_FINE)
+    now = 1_000.0
+
+    announced.record(SPEAKER_ID, ONE_FULL_FINE, now=now)
+
+    assert not announced.spent(SPEAKER_ID, now=now + DAMPEN_WINDOW + 1)
+
+
+def test_a_full_fine_inside_the_window_still_counts():
+    announced = RecentAnnouncements(budget=ONE_FULL_FINE)
+    now = 1_000.0
+
+    announced.record(SPEAKER_ID, ONE_FULL_FINE, now=now)
+
+    assert announced.spent(SPEAKER_ID, now=now + DAMPEN_WINDOW - 1)
+
+
+def test_a_budget_below_zero_is_never_spent():
+    """Which is the deployment that never asked for any of this."""
+    announced = RecentAnnouncements(budget=NEVER_DAMPENS)
+
+    announced.record(SPEAKER_ID, MANY_VIOLATIONS)
+
+    assert not announced.dampening
+    assert not announced.spent(SPEAKER_ID)
+
+
+def test_the_dampener_reads_its_budget_and_window_from_the_deployment():
+    """Both are settings; nothing in the tool carries a number."""
+    announced = RecentAnnouncements()
+
+    assert announced._budget == morality_cfg.dampen_after
+    assert announced._window == morality_cfg.dampen_seconds
 
 
 # ── the repeat wording ────────────────────────────

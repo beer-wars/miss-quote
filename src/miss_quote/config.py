@@ -125,6 +125,8 @@ RECALL_SECONDS_KEY = "recall_seconds"
 BACKOFF_SECONDS_KEY = "backoff_seconds"
 BACKOFF_PERCENT_KEY = "backoff_percent"
 VOLUME_FLOOR_KEY = "volume_floor"
+DAMPEN_AFTER_KEY = "dampen_after"
+DAMPEN_SECONDS_KEY = "dampen_seconds"
 RETENTION_DAYS_KEY = "retention_days"
 RESUME_SECONDS_KEY = "resume_seconds"
 SCHEDULE_KEY = "schedule"
@@ -157,6 +159,8 @@ SETTINGS_SCHEMA: Mapping[str, Mapping[str, type]] = {
         BACKOFF_SECONDS_KEY: float,
         BACKOFF_PERCENT_KEY: float,
         VOLUME_FLOOR_KEY: float,
+        DAMPEN_AFTER_KEY: int,
+        DAMPEN_SECONDS_KEY: float,
     },
     QUOTES_SECTION: {
         BACKOFF_SECONDS_KEY: float,
@@ -779,7 +783,8 @@ class ScoreboardConfig:
 @dataclass(frozen=True)
 class MoralityConfig:
     """
-    How soon a fine is a repeat, and how quiet a repeat offender gets.
+    How soon a fine is a repeat, how quiet a repeat offender gets, and how often
+    one is announced in full rather than as its chime.
 
     Where the rest of the tool's settings are per server and live in the mounted
     file, these are per deployment. What a fine costs and where that is written
@@ -841,6 +846,29 @@ class MoralityConfig:
                 SILENT_VOLUME,
                 file_cfg.setting(FINES_SECTION, VOLUME_FLOOR_KEY, 0.25),
             ),
+        )
+    )
+
+    # How many fines a speaker hears in full inside the window below before a
+    # single-credit one drops to the chime on its own. The backoff quietens a
+    # sentence that has already been said fifteen times; this stops saying it,
+    # which is the only thing that helps once a room has settled into swearing.
+    # Any value below 0 announces every fine in full, which is what a deployment
+    # that has not asked for this gets. 0 is a budget of nothing rather than the
+    # same thing: a speaker's first single-credit fine in the window is already
+    # a chime.
+    dampen_after: int = field(
+        default_factory=lambda: file_cfg.setting(FINES_SECTION, DAMPEN_AFTER_KEY, -1)
+    )
+
+    # The sliding window that budget is spent inside, so a speaker is owed a
+    # full fine again this long after the last one they heard rather than at the
+    # top of some fixed hour. Long, and deliberately much longer than the
+    # backoff: what it meters is how often the room is read a whole sentence,
+    # which is a question about an evening rather than about a flurry.
+    dampen_seconds: float = field(
+        default_factory=lambda: file_cfg.setting(
+            FINES_SECTION, DAMPEN_SECONDS_KEY, 3600.0
         )
     )
 

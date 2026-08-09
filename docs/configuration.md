@@ -569,7 +569,7 @@ verbal-morality:
 | `repeat_announcement` | no | Said instead when the same speaker is fined again inside [`settings.fines.repeat_seconds`](#settings-fines). Same placeholders |
 | `recall_triggers` | no, `what did i say`, `what did i just say`, `what was that` | How somebody asks what they were just fined for. **Replaces** the default. A lone one may be written unquoted rather than as a list |
 | `recall_announcement` | no | What they are told. `{user}` and `{word}` are the placeholders — not `{credits}`, which is not what is being announced |
-| `chime` | no | A WAV in `SPEECH_DIR/chimes`, played ahead of the announcement, named without its `.wav` |
+| `chime` | no | A WAV in `SPEECH_DIR/chimes`, played ahead of the announcement, named without its `.wav`. Also the whole of a [dampened fine](#what-a-fine-costs-and-how-loudly) |
 
 All three templates default to the lines above, which the tool carries, so a server that wants the defaults can leave them out. A template with a placeholder nothing fills is rejected at startup rather than at the moment someone swears, and the error names which setting it was and which placeholders that one actually has — `recall_announcement` has `{user}` and `{word}`, and reaching for `{credits}` in it is refused.
 
@@ -585,7 +585,7 @@ Nothing checks whether the result is a word anybody says, and it does not need t
 
 Matching is **whole words, case-insensitive**. A substring match fines the innocent, and the canonical example, Scunthorpe, is a place people live.
 
-#### What a fine costs, and how loudly
+#### What a fine costs, and how loudly {#what-a-fine-costs-and-how-loudly}
 
 **The fine scales with the utterance**: one credit per forbidden word in it, so three of them is `3 credits` and one is `1 credit`. The count is filled into `{credits}` already pluralized, as a numeral — every synthesizer worth pointing this at reads `3` as a number, and `1 credits` is wrong in a way a listener hears. What a credit is *called* is [`settings.credits.currency`](#settings-credits), and the plural is grown from it by the same spelling rules the word list uses, so `penny` announces as `2 pennies`. `{violations}` agrees with the count, reading `a violation` for one and `multiple violations` for more.
 
@@ -594,6 +594,12 @@ What does not scale is the number of announcements. Three violations in one utte
 **Being fined twice in a row is worded differently.** A speaker fined again inside `settings.fines.repeat_seconds` gets `repeat_announcement` — "you are *also* fined" — because reading the whole sentence out again sounds like a bot that has lost track of what it just said. It is per speaker: somebody else swearing in the meantime does not make their first fine a repeat.
 
 **A repeat offender is announced more quietly.** Being fined is the joke, and the joke told fifteen times in five minutes is a denial of service on the conversation. Every violation inside a sliding `settings.fines.backoff_seconds` takes `settings.fines.backoff_percent` off the next announcement, down to `settings.fines.volume_floor` — at the defaults, 5% a violation over five minutes, floored at a quarter as loud as `PLAYBACK_VOLUME`, so fifteen of them reach the bottom. The percentage is off what a listener hears rather than off the amplitude ([how a volume is read](#volumes)), so each step is one somebody can actually notice. The first swear in a window is announced at full volume: the backoff is for saying it again. The window is per speaker and per server, held in memory only. What it does **not** affect is the tally.
+
+**Past a point the sentence stops being said at all.** A speaker is read `settings.fines.dampen_after` fines in full inside a sliding `settings.fines.dampen_seconds` — an hour by default — and once that budget is spent, a **one-credit** fine is the `chime` on its own with no words behind it. It is the backoff's argument carried to its end: a quarter-volume sentence is still a whole sentence read over the top of whatever the channel was talking about, and a room that has settled into swearing already knows the wording. **This is off unless a deployment asks for it**; `-1` is the default and announces every fine in full, and `0` dampens from the first one.
+
+What is never dampened is a fine worth **more than one credit**. Several forbidden words in one breath is a thing somebody has just done rather than the one the channel has heard all evening, and the sentence naming what it cost is the whole of the joke. It does spend from the budget, though — what the budget meters is whole sentences, whatever earned them.
+
+Three things a dampened fine keeps. It is still **counted**, on the same terms as one that went unannounced. It can still be **asked about** — the word is the one thing a chime cannot convey, so `recall_triggers` still answers. And it is still **quietened by the backoff**, chime and all. What it needs is a `chime`: with none configured there is nothing to dampen to and a dampened fine says nothing at all, which is reported at startup rather than left to be noticed.
 
 **The announcements are rendered at startup.** The roster is known before anybody speaks and so is the shape of the sentence, so on the way up the tool hands `tts` every name in `users` against one, two, and three violations, in both wordings. Three violations because that is what a sentence usually holds; a fourth is remarkable enough to wait for the synthesizer. What cannot be warmed is anyone **not** on the roster: they pay for their first fine and nobody pays for it again.
 
@@ -651,6 +657,8 @@ Only used by `verbal-morality`. What a fine is *worth* is the scoreboard's; thes
 | `backoff_seconds` | `300.0` | The sliding window a violation counts for against how loudly the next one is announced |
 | `backoff_percent` | `5` | How much of the next announcement's loudness each violation inside that window takes off, and off the knob rather than the amplitude, so 5% is 5% quieter to listen to ([how a volume is read](#volumes)). `0` takes nothing off, turning the backoff off; anything above `100` reaches the floor on the first repeat, and anything negative is treated as `0` rather than made louder |
 | `volume_floor` | `0.25` | The quietest a fine is announced once a speaker has earned the full backoff, as how loud it is next to `PLAYBACK_VOLUME` — a quarter is a quarter as loud ([how a volume is read](#volumes)). `0` silences a repeat offender entirely; `1` turns the backoff off |
+| `dampen_after` | `-1` | How many fines a speaker hears **in full** inside `dampen_seconds` before a one-credit one drops to the chime alone. `-1`, or any value below `0`, announces every fine in full; `0` is a budget of nothing, so the first one-credit fine of a window is already a chime |
+| `dampen_seconds` | `3600.0` | The sliding window that budget is spent inside, so a speaker is owed a full fine again this long after the last one they heard |
 
 ### settings.quotes {#settings-quotes}
 

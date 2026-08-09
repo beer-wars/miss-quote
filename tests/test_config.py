@@ -175,6 +175,33 @@ def test_the_backoff_window_is_read_in_seconds(monkeypatch, tmp_path) -> None:
     assert reloaded.morality_cfg.backoff_seconds == 45.0
 
 
+def test_fines_are_not_dampened_unless_a_deployment_asks(monkeypatch, tmp_path) -> None:
+    """Every fine in full, which is what the tool did before there was a budget."""
+    reloaded = _reload_without_settings(monkeypatch, tmp_path)
+
+    assert reloaded.morality_cfg.dampen_after < 0
+
+
+def test_the_dampening_budget_is_read_as_a_count(monkeypatch, tmp_path) -> None:
+    reloaded = _reload_with_setting(monkeypatch, tmp_path, "fines", "dampen_after", 3)
+
+    assert reloaded.morality_cfg.dampen_after == 3
+
+
+def test_the_dampening_window_is_read_in_seconds(monkeypatch, tmp_path) -> None:
+    reloaded = _reload_with_setting(
+        monkeypatch, tmp_path, "fines", "dampen_seconds", 90
+    )
+
+    assert reloaded.morality_cfg.dampen_seconds == 90.0
+
+
+def test_the_dampening_window_defaults_to_an_hour(monkeypatch, tmp_path) -> None:
+    reloaded = _reload_without_settings(monkeypatch, tmp_path)
+
+    assert reloaded.morality_cfg.dampen_seconds == 3600.0
+
+
 def test_the_currency_defaults_to_credits(monkeypatch, tmp_path) -> None:
     reloaded = _reload_without_settings(monkeypatch, tmp_path)
 

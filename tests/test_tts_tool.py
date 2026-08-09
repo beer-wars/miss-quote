@@ -328,6 +328,50 @@ async def test_a_missing_chime_costs_the_chime_and_not_the_words(speaker):
     assert spoken == WORDS
 
 
+# ── the chime on its own ──────────────────────────
+
+
+async def test_a_chime_can_be_played_with_nothing_behind_it(speaker, chime):
+    await _tool(speaker).play_chime(SOURCE, chime)
+
+    played_source, spoken = speaker.played[0]
+    assert played_source is SOURCE
+    assert spoken == CHIME_AUDIO
+
+
+async def test_a_chime_on_its_own_is_never_synthesized(speech, speaker, chime):
+    """There are no words, so the synthesizer has nothing to be asked for."""
+    await _tool(speaker).play_chime(SOURCE, chime)
+
+    assert speech.asked == []
+
+
+async def test_the_scale_reaches_the_speaker_for_a_chime(speaker, chime):
+    await _tool(speaker).play_chime(SOURCE, chime, scale=QUIETER)
+
+    assert speaker.scales == [QUIETER]
+
+
+async def test_a_chime_on_its_own_is_played_at_full_volume_by_default(speaker, chime):
+    await _tool(speaker).play_chime(SOURCE, chime)
+
+    assert speaker.scales == [UNITY_VOLUME]
+
+
+async def test_a_missing_chime_on_its_own_plays_nothing(speaker):
+    """It was the whole announcement, and there is nothing left for it to cost."""
+    await _tool(speaker).play_chime(SOURCE, "never-mounted")
+
+    assert speaker.played == []
+
+
+async def test_no_chime_named_plays_nothing(speaker, chimes):
+    await _tool(speaker).play_chime(SOURCE, None)
+
+    assert chimes.asked == []
+    assert speaker.played == []
+
+
 # ── the head start ────────────────────────────────
 
 

@@ -115,6 +115,24 @@ settings:
     #
     # volume_floor: 0.25
 
+    # How many fines a speaker hears in full inside the window below before a
+    # one-credit fine drops to the chime with no words behind it. Where the
+    # backoff turns the sentence down, this stops saying it: a room that has
+    # settled into swearing has heard the wording, and what is left to convey is
+    # that a fine happened.
+    #
+    # A fine worth more than one credit is always said in full, and a dampened
+    # one is still counted and still answers "what did I say". With no `chime`
+    # configured on the tool there is nothing to dampen to, which is a fine that
+    # says nothing at all; that is reported at startup.
+    #
+    # -1, or anything below 0, announces every fine in full and is the default.
+    # 0 is a budget of nothing rather than the same thing: every one-credit fine
+    # is a chime from the first.
+    #
+    # dampen_after: -1
+    # dampen_seconds: 3600
+
   # The `quotes` tool, for every server that enables it. The triggers and the
   # lines themselves are a YAML file at QUOTES_FILE.
   quotes:

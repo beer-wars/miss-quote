@@ -17,6 +17,10 @@ onto the front, and a gain is a multiplication, and neither is a thing you can d
 to an encoded packet. The speaker makes that call from the gain and the type it
 is given, so this decides only whether to hand over a phrase or a stream.
 
+`play_chime` is the other end of the same decision: a flourish and no sentence,
+for a tool whose announcement the channel already knows by heart and which has
+only to say that it happened. Nothing is synthesized, and nothing is cached.
+
 `play_held` is `play` for a sentence that does not exist yet. A tool that has to
 go and think before it can answer hands over whatever is doing the thinking, and
 gets music under the wait and the answer straight after it, as one clip. See
@@ -143,6 +147,30 @@ class Tts(Tool):
 
         async for chunk in words:
             yield chunk
+
+    async def play_chime(
+        self, source: Source, chime: str | None, *, scale: float = UNITY_VOLUME
+    ) -> None:
+        """
+        Play one hand-placed clip with nothing behind it.
+
+        For a tool that has decided the flourish is the whole of what it has to
+        say — a fine the channel has already heard the wording of several times,
+        where what is left to convey is that one happened. The synthesizer is
+        not involved at all.
+
+        A clip that is missing, unplayable, or never named plays nothing rather
+        than raising, on the same terms as a chime in front of a sentence: it is
+        the announcement here as well, and there is nothing left for it to cost.
+        """
+        if chime is None:
+            return
+
+        opening = await self._chimes.clip(chime)
+        if not opening:
+            return
+
+        await self._speaker.play(source, _clip(opening), scale)
 
     async def play_held(
         self,
@@ -347,6 +375,11 @@ class Tts(Tool):
             self._rendered,
             self._held,
         )
+
+
+async def _clip(audio: bytes) -> AsyncIterator[bytes]:
+    """Samples already in hand, as the stream the speaker takes."""
+    yield audio
 
 
 async def _lead(speech: AsyncIterator[bytes], wanted: int) -> list[bytes]:
