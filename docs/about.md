@@ -18,7 +18,7 @@ It is a hard fork of [Leehyunbin0131/Discord-Realtime-STT-Bot](https://github.co
 
 ```mermaid
 graph TD
-    A["Discord gateway"] -->|"48 kHz stereo PCM, 20 ms frames"| B
+    A["Discord gateway<br/><i>somebody speaks</i>"] -->|"48 kHz stereo PCM, 20 ms frames"| B
 
     subgraph LOCAL["SERIAL — in process, ~4.9 ms CPU per speaker per second of audio"]
         direction TB
@@ -50,9 +50,13 @@ graph TD
     T -.->|"a phrase"| M["Speech cache<br/><i>Ogg Opus in SPEECH_DIR/cache</i>"]
     T -.->|"a chime, by name"| CH["Chime library<br/><i>WAVs in SPEECH_DIR/chimes</i>"]
     M -.->|"on a miss"| N["Wyoming TTS<br/><i>TTS_HOST:TTS_PORT</i>"]
-    M -.->|"Opus packets, sent unencoded"| A
-    CH -.->|"samples, chained ahead of the words"| A
+    M -.->|"Opus packets, sent unencoded"| Z
+    CH -.->|"samples, chained ahead of the words"| Z
+
+    Z["Discord gateway<br/><i>the bot answers</i>"]
 ```
+
+The gateway is drawn at both ends because it is one connection: the channel the audio came from is the channel anything gets played back into.
 
 The dotted half is optional and only exists for servers that enabled the `tts` tool; a deployment where none did never opens a TTS connection. Everything played into a channel goes through that one tool — it owns the cache, the chime library, the volume, and the voice connection, and the tools that decide *what* to say reach it through the toolbox.
 
