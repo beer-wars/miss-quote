@@ -62,14 +62,10 @@ from typing import Any
 import discord
 
 from miss_quote.config import file_cfg
+from miss_quote.tools.base import MESSAGE_LIMIT
 from miss_quote.utils.logging import get_logger
 
 logger = get_logger(__name__)
-
-# Discord's ceiling on one message's content. Not a setting: it is the API's
-# number. Nothing here sends content — that is the whole point of the embeds
-# below — but `bot.ticker` trims against it and takes it from here.
-MESSAGE_LIMIT = 2000
 
 # Discord's ceilings on embeds. Also the API's numbers. A message may carry ten
 # of them, which is a limit nothing here can reach: two descriptions already

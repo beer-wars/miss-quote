@@ -15,7 +15,7 @@ import miss_quote.tools.summary as summary_module
 from miss_quote.audio.hold import DEFAULT_HOLD_VOLUME
 from miss_quote.config import SummaryConfig, TranscriptConfig, transcript_cfg
 from miss_quote.llm.client import CompletionError
-from miss_quote.tools.base import Tool, ToolContext, Toolbox
+from miss_quote.tools.base import MESSAGE_LIMIT, Tool, ToolContext, Toolbox
 from miss_quote.tools.summary import (
     DEFAULT_ADDRESS_WINDOW_SECONDS,
     ELLIPSIS,
@@ -200,9 +200,10 @@ class FakeTicker:
     block every couple of seconds would look identical from the final state.
     """
 
-    def __init__(self, refusing: bool = False) -> None:
+    def __init__(self, refusing: bool = False, limit: int = MESSAGE_LIMIT) -> None:
         self.shown: list[tuple[str, str]] = []
         self.cleared: list[str] = []
+        self.limit = limit
         self._refusing = refusing
 
     async def show(self, server: str, channel: str, text: str) -> bool:
@@ -1566,6 +1567,11 @@ def _watching(**channel) -> dict:
     return _config(post_transcripts=True, **channel)
 
 
+# Small enough that a test can write a feed over it in a few readable lines,
+# rather than generating two thousand characters to prove an off-by-one.
+NARROW_LIMIT = 120
+
+
 def _block(ticker: FakeTicker) -> str:
     """What the message says after the most recent write."""
     return ticker.shown[-1][1]
@@ -1574,6 +1580,84 @@ def _block(ticker: FakeTicker) -> str:
 def _lines(shown: str) -> list[str]:
     """The lines of a shown block, with the fence taken off either end."""
     return [line for line in shown.strip().splitlines() if line != TRANSCRIPT_FENCE]
+
+
+async def test_a_feed_over_the_limit_drops_its_oldest_lines(summaries):
+    """
+    A ring is bounded by lines and a message by characters.
+
+    Ten people saying a sentence each and ten reading a paragraph each are the
+    same number of lines and very different numbers of characters, so the count
+    is a maximum rather than a promise.
+    """
+    ticker = FakeTicker(limit=NARROW_LIMIT)
+    tool, _ = _tool(config=_watching(), ticker=ticker)
+
+    for number in range(6):
+        await tool.handle_utterance(
+            _said(f"Line number {number} with several words after it."),
+            Session(WATCHED_SOURCE),
+        )
+
+    await _refreshed(tool)
+    shown = _block(ticker)
+
+    assert len(shown) <= NARROW_LIMIT
+    assert len(_lines(shown)) < 6
+
+    # The newest survives and the oldest is what went.
+    assert "Line number 5" in shown
+    assert "Line number 0" not in shown
+
+
+async def test_dropping_lines_keeps_the_fence_on_both_ends(summaries):
+    """
+    The reason whole lines come off rather than characters.
+
+    A body cut at a character keeps its tail, and the fence that opens this one
+    is the first thing at the front — so cutting there leaves the closing fence
+    with nothing to close and hands the feed back to Markdown to interpret.
+    """
+    ticker = FakeTicker(limit=NARROW_LIMIT)
+    tool, _ = _tool(config=_watching(), ticker=ticker)
+
+    for number in range(6):
+        await tool.handle_utterance(
+            _said(f"Line number {number} with several words after it."),
+            Session(WATCHED_SOURCE),
+        )
+
+    await _refreshed(tool)
+    shown = _block(ticker)
+
+    assert shown.startswith(TRANSCRIPT_FENCE)
+    assert shown.endswith(TRANSCRIPT_FENCE)
+    assert shown.count(TRANSCRIPT_FENCE) == 2
+
+
+async def test_one_line_too_long_for_the_limit_is_still_shown(summaries):
+    """A feed showing one over-long line is a feed; the ticker cuts underneath."""
+    ticker = FakeTicker(limit=NARROW_LIMIT)
+    tool, _ = _tool(config=_watching(), ticker=ticker)
+
+    await tool.handle_utterance(
+        _said("word " * 60), Session(WATCHED_SOURCE)
+    )
+    await _refreshed(tool)
+
+    assert len(_lines(_block(ticker))) == 1
+
+
+async def test_a_feed_inside_the_limit_keeps_every_line(summaries):
+    ticker = FakeTicker(limit=NARROW_LIMIT)
+    tool, _ = _tool(config=_watching(), ticker=ticker)
+
+    for number in range(3):
+        await tool.handle_utterance(_said(f"Short {number}."), Session(WATCHED_SOURCE))
+
+    await _refreshed(tool)
+
+    assert len(_lines(_block(ticker))) == 3
 
 
 async def test_a_room_shows_nothing_unless_it_asks(summaries):

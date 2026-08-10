@@ -41,8 +41,11 @@ tool that calls this waits out its own interval after each write rather than
 writing on a fixed tick. See `Summary._ticking`.
 
 Whatever is shown is cut to Discord's message limit rather than split across
-several, unlike an announcement: what is being shown is the current state of
-something, and a state cut in half across two messages is two states.
+several, unlike an account: what is being shown is the current state of
+something, and a state cut in half across two messages is two states. The cut
+here is a backstop — a caller that has lines is expected to have dropped whole
+ones against `limit` before it gets here, since cutting a fenced block at a
+character costs it the fence it opens with.
 """
 
 from __future__ import annotations
@@ -52,8 +55,7 @@ from typing import Any
 
 import discord
 
-from miss_quote.bot.announcer import MESSAGE_LIMIT
-from miss_quote.tools.base import Finder
+from miss_quote.tools.base import MESSAGE_LIMIT, Finder
 from miss_quote.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -85,6 +87,10 @@ PIN_PERMISSION = "Pin Messages"
 
 class DiscordTicker:
     """Holds one message per channel and edits it as a tool changes its mind."""
+
+    # What `Ticker` promises a caller, so that a tool trims to the same number
+    # this enforces rather than to one of its own that could drift from it.
+    limit = MESSAGE_LIMIT
 
     def __init__(self, finder: Finder) -> None:
         # The announcer, which already resolves a channel name against the
@@ -353,11 +359,17 @@ def trimmed(text: str, limit: int = MESSAGE_LIMIT) -> str:
     """
     One body as much of it as Discord will take, cut at the end.
 
-    Cut rather than split, unlike an announcement. What is being shown is the
-    current state of something and the newest line is the one being watched, so
-    a body over the limit loses its front rather than becoming a second message
-    nobody is looking at. The caller does the real trimming, which is per line
-    and knows what a line is; this is the ceiling underneath it.
+    Cut rather than split, unlike an account. What is being shown is the current
+    state of something and the newest line is the one being watched, so a body
+    over the limit loses its front rather than becoming a second message nobody
+    is looking at.
+
+    **This is the backstop, not the trimming.** Cutting at a character is the
+    wrong tool for anything with structure at the front of it — a fenced block
+    loses the fence that opens it and stops being a block at all — so a caller
+    with lines trims to `Ticker.limit` itself and drops whole ones. See
+    `Summary._fitting`. What is left for this is a caller that did not, which is
+    a rendering nobody wants rather than a message Discord refuses.
     """
     if len(text) <= limit:
         return text
