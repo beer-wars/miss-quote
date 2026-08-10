@@ -10,6 +10,7 @@ from miss_quote.bot.announcer import (
     EMBED_DESCRIPTION_LIMIT,
     EMBED_TOTAL_LIMIT,
     MESSAGE_LIMIT,
+    PINS_FULL,
     DiscordAnnouncer,
     paged,
     split,
@@ -30,6 +31,7 @@ BOT_ID = 42
 SOMEBODY_ELSE = 43
 
 SERVER_ERROR = 500
+REFUSED = 400
 
 OPENED = datetime(2026, 7, 26, 20, 14, tzinfo=timezone.utc)
 
@@ -54,6 +56,8 @@ class Message:
         self.id = identifier
         self.jump_url = f"https://discord.test/{identifier}"
         self.edits = 0
+        self.pinned = False
+        self.unpinnable: Exception | None = None
 
     @property
     def title(self) -> str | None:
@@ -67,7 +71,16 @@ class Message:
         self.embeds = list(embeds)
         self.edits += 1
 
+    async def pin(self) -> None:
+        if self.unpinnable is not None:
+            raise self.unpinnable
+
+        self.pinned = True
+
     async def delete(self) -> None:
+        # Discord unpins what it deletes, which is what lets a replaced run take
+        # its own pin off the list without anything unpinning it by hand.
+        self.pinned = False
         self.channel.take(self)
 
 
@@ -87,6 +100,7 @@ class Channel:
         self._refuses = refuses
         self._unreadable = unreadable
         self.accepts = accepts
+        self.unpinnable: Exception | None = None
         self._ids = count(1)
 
     async def send(self, embeds) -> Message:
@@ -100,6 +114,7 @@ class Channel:
             self.accepts -= 1
 
         message = Message(self, embeds, BOT_ID, next(self._ids))
+        message.unpinnable = self.unpinnable
         self.messages.append(message)
 
         return message
@@ -345,28 +360,25 @@ async def test_a_deleted_message_is_posted_again_rather_than_reported():
     assert [message.text for message in channel.messages] == [FULLER]
 
 
-# ── outgrowing the message it is in ───────────
+# ── outgrowing the messages it is in ──────────
 
 
-async def test_an_account_that_outgrows_its_message_moves_and_leaves_a_pointer():
+async def test_an_account_that_outgrows_its_run_is_posted_again_whole():
     channel = Channel(CHANNEL)
     announcer = _announcer(Guild(channel))
 
     await announcer.revise(ALIAS, CHANNEL, TITLE, SUMMARY, OPENED)
-    origin = channel.messages[0]
+    first = channel.messages[0]
 
     assert await announcer.revise(ALIAS, CHANNEL, TITLE, _long(), OPENED)
 
-    assert channel.messages[0] is origin
-    assert origin.title == TITLE
-
-    run = channel.messages[1:]
-    assert len(run) > 1
-    assert run[0].jump_url in origin.text
-    assert "Paragraph 0." in run[0].text
+    # Nothing is left at the old address: the pin is how an account is found.
+    assert first not in channel.messages
+    assert len(channel.messages) > 1
+    assert channel.messages[0].title == TITLE
 
 
-async def test_the_moved_run_holds_the_whole_account_in_order():
+async def test_the_replaced_run_holds_the_whole_account_in_order():
     channel = Channel(CHANNEL)
     announcer = _announcer(Guild(channel))
     account = _long()
@@ -379,7 +391,7 @@ async def test_the_moved_run_holds_the_whole_account_in_order():
     # either side of one.
     words = [
         word
-        for message in channel.messages[1:]
+        for message in channel.messages
         for embed in message.embeds
         for word in (embed.description or "").split()
     ]
@@ -387,41 +399,110 @@ async def test_the_moved_run_holds_the_whole_account_in_order():
     assert words == account.split()
 
 
-async def test_a_pointer_is_repointed_rather_than_chained():
-    """An evening that keeps growing leaves one breadcrumb, not a trail of them."""
+async def test_a_run_that_still_fits_is_rewritten_where_it_stands():
+    """Two messages that still need two are edited, not replaced."""
+    channel = Channel(CHANNEL)
+    announcer = _announcer(Guild(channel))
+
+    await announcer.revise(ALIAS, CHANNEL, TITLE, _long(), OPENED)
+    run = list(channel.messages)
+    assert len(run) > 1
+
+    # Longer, but not by enough to need another message.
+    assert await announcer.revise(
+        ALIAS, CHANNEL, TITLE, _long() + "\n\nOne more paragraph.", OPENED
+    )
+
+    assert channel.messages == run
+    assert all(message.edits == 1 for message in run)
+    assert "One more paragraph." in channel.messages[-1].text
+
+
+async def test_an_account_that_shrinks_keeps_its_head_and_drops_the_tail():
+    channel = Channel(CHANNEL)
+    announcer = _announcer(Guild(channel))
+
+    await announcer.revise(ALIAS, CHANNEL, TITLE, _long(), OPENED)
+    head, *tail = channel.messages
+    assert tail
+
+    assert await announcer.revise(ALIAS, CHANNEL, TITLE, FULLER, OPENED)
+
+    assert channel.messages == [head]
+    assert head.text == FULLER
+    assert head.pinned
+
+
+# ── the pin ───────────────────────────────────
+
+
+async def test_the_head_of_a_run_is_pinned():
+    channel = Channel(CHANNEL)
+
+    await _announcer(Guild(channel)).revise(ALIAS, CHANNEL, TITLE, SUMMARY, OPENED)
+
+    assert channel.messages[0].pinned
+
+
+async def test_only_the_head_is_pinned():
+    channel = Channel(CHANNEL)
+
+    await _announcer(Guild(channel)).revise(ALIAS, CHANNEL, TITLE, _long(), OPENED)
+
+    assert channel.messages[0].pinned
+    assert not any(message.pinned for message in channel.messages[1:])
+
+
+async def test_a_rewrite_leaves_the_pin_alone():
     channel = Channel(CHANNEL)
     announcer = _announcer(Guild(channel))
 
     await announcer.revise(ALIAS, CHANNEL, TITLE, SUMMARY, OPENED)
-    origin = channel.messages[0]
-
-    await announcer.revise(ALIAS, CHANNEL, TITLE, _long(), OPENED)
-    superseded = channel.messages[1]
-
-    await announcer.revise(ALIAS, CHANNEL, TITLE, _long(LONG_PARAGRAPHS + 10), OPENED)
-
-    titled = [message for message in channel.messages if message.title == TITLE]
-
-    # The one it began in and the one it lives in now, and nothing between them
-    # still claiming to be this evening.
-    assert titled == [origin, channel.messages[1]]
-    assert channel.messages[1].jump_url in origin.text
-    assert superseded not in channel.messages
-
-
-async def test_an_account_that_shrinks_back_drops_what_it_no_longer_needs():
-    channel = Channel(CHANNEL)
-    announcer = _announcer(Guild(channel))
-
-    await announcer.revise(ALIAS, CHANNEL, TITLE, SUMMARY, OPENED)
-    await announcer.revise(ALIAS, CHANNEL, TITLE, _long(), OPENED)
-
-    grew = len(channel.messages)
+    head = channel.messages[0]
 
     await announcer.revise(ALIAS, CHANNEL, TITLE, FULLER, OPENED)
 
-    assert len(channel.messages) < grew
-    assert channel.messages[-1].text == FULLER
+    assert channel.messages == [head]
+    assert head.pinned
+
+
+async def test_a_replaced_run_takes_its_pin_with_it_and_the_new_head_is_pinned():
+    """Deleting a message unpins it, so nothing has to be unpinned by hand."""
+    channel = Channel(CHANNEL)
+    announcer = _announcer(Guild(channel))
+
+    await announcer.revise(ALIAS, CHANNEL, TITLE, SUMMARY, OPENED)
+    gone = channel.messages[0]
+
+    await announcer.revise(ALIAS, CHANNEL, TITLE, _long(), OPENED)
+
+    assert not gone.pinned
+    assert gone not in channel.messages
+    assert channel.messages[0].pinned
+    assert sum(1 for message in channel.messages if message.pinned) == 1
+
+
+async def test_a_pin_that_will_not_land_still_leaves_the_account_up(caplog):
+    channel = Channel(CHANNEL)
+    channel.unpinnable = discord.Forbidden(_response(403), "nope")
+
+    assert await _announcer(Guild(channel)).revise(
+        ALIAS, CHANNEL, TITLE, SUMMARY, OPENED
+    )
+
+    assert channel.messages[0].text == SUMMARY
+    assert "Pin Messages" in caplog.text
+
+
+async def test_a_channel_with_no_room_for_a_pin_says_so(caplog):
+    channel = Channel(CHANNEL)
+    channel.unpinnable = _pins_full()
+
+    assert await _announcer(Guild(channel)).revise(
+        ALIAS, CHANNEL, TITLE, SUMMARY, OPENED
+    )
+
+    assert "no room for another pin" in caplog.text
 
 
 # ── finding one a previous process left ───────
@@ -459,6 +540,43 @@ async def test_somebody_elses_message_is_not_adopted():
 
     assert theirs.text == SUMMARY
     assert len(channel.messages) == 2
+
+
+async def test_a_channel_full_of_pinned_accounts_finds_the_right_one():
+    """
+    There is one account per sitting and they all stay, so "the pinned message"
+    is never the question. What is looked for is this evening's title.
+    """
+    channel = Channel(CHANNEL)
+
+    for when in ("Wed 15 Jul 2026, 17:03", "Wed 22 Jul 2026, 17:11"):
+        older = channel.left([_embed(f"general — {when}", "an earlier evening")])
+        older.pinned = True
+
+    tonight = channel.left([_embed(TITLE, SUMMARY)])
+    tonight.pinned = True
+
+    await _announcer(Guild(channel)).revise(ALIAS, CHANNEL, TITLE, FULLER, OPENED)
+
+    assert tonight.text == FULLER
+    assert [message.text for message in channel.messages[:2]] == [
+        "an earlier evening",
+        "an earlier evening",
+    ]
+    assert len(channel.messages) == 3
+
+
+async def test_an_account_from_another_evening_is_not_mistaken_for_this_one():
+    """Same room, different night: the title carries the date and the minute."""
+    channel = Channel(CHANNEL)
+    last_week = channel.left([_embed("general — Wed 22 Jul 2026, 17:11", "last week")])
+    last_week.pinned = True
+
+    await _announcer(Guild(channel)).revise(ALIAS, CHANNEL, TITLE, SUMMARY, OPENED)
+
+    assert last_week.text == "last week"
+    assert len(channel.messages) == 2
+    assert channel.messages[1].title == TITLE
 
 
 async def test_a_channel_holding_nothing_of_ours_gets_a_fresh_account():
@@ -593,6 +711,13 @@ def test_an_unbroken_run_is_cut_at_the_limit():
 
     assert all(len(piece) <= MESSAGE_LIMIT for piece in pieces)
     assert "".join(pieces) == body
+
+
+def _pins_full() -> discord.HTTPException:
+    """What Discord says when a channel is holding its fiftieth pin."""
+    failure = discord.HTTPException(_response(REFUSED), {"code": PINS_FULL})
+
+    return failure
 
 
 def _response(status: int):

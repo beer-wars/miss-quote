@@ -38,7 +38,10 @@ That is a statement about *where* the GPU lives, not about whether you need one.
 | **Connect**, **Speak** | Each voice channel | Everything — the bot cannot join or answer |
 | **View Channel**, **Send Messages**, **Embed Links** | The text channel a summary is posted to | Summaries are written to disk and never posted |
 | **Read Message History** | The text channel a summary is posted to | A restart mid-evening posts a second account of the same evening beside the first |
+| **Pin Messages** | The text channel a summary is posted to | Summaries are posted but not pinned, so an evening has to be scrolled for |
 | **Set Voice Channel Status** | Each voice channel | The scoreboard keeps counting and logs once per change; the standings never reach the channel |
+
+**Pin Messages** is its own permission and **Manage Messages does not carry it** — Discord split the two apart, so a bot trusted to delete anyone's message in a channel can still be refused a pin on its own.
 
 **Embed Links** is easy to miss. An account is posted as an embed rather than as message content, and a bot allowed to talk in a channel is not thereby allowed to put an embed in it — so a channel that has been receiving summaries can start refusing them on nothing but an upgrade. The refusal names both permissions in the log for that reason.
 
