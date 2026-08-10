@@ -148,6 +148,7 @@ ADDRESS_WINDOW_SECONDS_KEY = "address_window_seconds"
 CLAUSE_WINDOW_SECONDS_KEY = "clause_window_seconds"
 POST_TRANSCRIPTS_KEY = "post_transcripts"
 TRANSCRIPT_LINES_KEY = "transcript_lines"
+PINNED_SESSIONS_KEY = "pinned_sessions"
 TRANSCRIPT_REFRESH_SECONDS_KEY = "transcript_refresh_seconds"
 
 # Everything a channel block may say. Anything else in one is a setting nothing
@@ -179,6 +180,7 @@ CHANNEL_KEYS = (
     POST_TRANSCRIPTS_KEY,
     TRANSCRIPT_LINES_KEY,
     TRANSCRIPT_REFRESH_SECONDS_KEY,
+    PINNED_SESSIONS_KEY,
 )
 
 # How long a retelling has to sound like before it is worth the tokens, and how
@@ -355,6 +357,14 @@ DEFAULT_TRANSCRIPT_LINES = 10
 # a message rather than a channel status.
 DEFAULT_TRANSCRIPT_REFRESH_SECONDS = 2.0
 
+# How many evenings stay pinned. A channel holds fifty pins and an account is
+# one of them per sitting, so left alone they would fill the list in a year of
+# weekly sessions and every account after that would go up unpinned. Five is
+# the last month or so of a room that meets weekly, which is as far back as
+# anybody reaches for an evening without knowing its date — and past that the
+# account is still there to scroll to, and still on disk.
+DEFAULT_PINNED_SESSIONS = 5
+
 # The fastest a server may ask for. discord.py sleeps out a rate limit rather
 # than raising, so a file asking for a twentieth of a second does not fail — it
 # silently lags, and a feed that reads as live while running a minute behind is
@@ -438,6 +448,7 @@ class Monitored:
     post_transcripts: bool
     transcript_lines: int
     transcript_refresh_seconds: float
+    pinned_sessions: int
 
     @property
     def posting(self) -> bool:
@@ -821,7 +832,12 @@ class Summary(Tool):
         )
 
         await self.announcer.revise(
-            self.server, monitored.channel, header, text, opened
+            self.server,
+            monitored.channel,
+            header,
+            text,
+            opened,
+            monitored.pinned_sessions,
         )
 
     # ── reading it back ───────────────────────────
@@ -1425,6 +1441,11 @@ def _channel(
             TRANSCRIPT_LINES_KEY,
             raw.get(TRANSCRIPT_LINES_KEY),
             DEFAULT_TRANSCRIPT_LINES,
+        ),
+        pinned_sessions=_whole(
+            PINNED_SESSIONS_KEY,
+            raw.get(PINNED_SESSIONS_KEY),
+            DEFAULT_PINNED_SESSIONS,
         ),
         transcript_refresh_seconds=_paced(
             raw.get(TRANSCRIPT_REFRESH_SECONDS_KEY), DEFAULT_TRANSCRIPT_REFRESH_SECONDS
