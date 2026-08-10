@@ -373,6 +373,10 @@ code, pre, kbd, samp { font-family: var(--font-mono); }
    =================================================================== */
 
 .section { padding: 68px 0; }
+
+/* The hero already closes with its own padding, which an untinted section under it would double.
+   A tinted one keeps its padding: the background change is the boundary, so the space reads as its own. */
+.hero + .section:not(.section-alt) { padding-top: 0; }
 .section-alt {
   background: var(--bg-alt);
   border-block: 1px solid var(--line-soft);
@@ -580,6 +584,9 @@ a.card:hover { color: inherit; }
   text-align: center;
   padding: 76px 0 88px;
 }
+
+/* An untinted section above already closes with its own padding, which the CTA would double. */
+.section:not(.section-alt) + .cta { padding-top: 0; }
 .cta h2 {
   font-size: clamp(1.7rem, 3.6vw, 2.3rem);
   letter-spacing: -0.03em;
