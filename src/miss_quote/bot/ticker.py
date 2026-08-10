@@ -21,8 +21,10 @@ next post reads the channel's pins and takes down whatever this bot left there.
 Fifty pins is a ceiling a slow leak would eventually reach; a leak that is swept
 on the way past never gets there. See `_swept`.
 
-This bot pins nothing else. If it ever does, `_swept` is the line that has to
-learn the difference.
+This bot pins one other thing: `bot.announcer` pins the head of every account it
+files, in the same channel. `_swept` tells them apart by their embeds — an
+account has them and a feed does not — rather than by anything it has to
+remember across a restart.
 
 **Only the pin needs a permission.** Posting needs Send Messages, and everything
 after it is the bot's own message — editing one and deleting one are ungoverned,
@@ -309,10 +311,17 @@ class DiscordTicker:
         pin list is where those are findable, which is the whole reason the live
         message is pinned at all.
 
-        Only this bot's own messages, and this bot pins nothing else — a pin
-        somebody put on a message of somebody else's is not ours to take off,
-        and one it put on a message of the bot's is a person pinning something
-        the bot is about to delete anyway.
+        Only this bot's own messages, and only the ones that are feeds. Both
+        halves matter, and the second is newer than the first: a pin somebody put
+        on somebody else's message is not ours to take off, and the bot's own
+        pinned messages are no longer all feeds. `bot.announcer` pins the head of
+        every account it files, in this same channel, and an account is a thing
+        the evening left behind rather than something this is entitled to tidy.
+
+        What separates them is structural rather than guessed at. A feed is
+        message content and carries no embed; an account is embeds and carries no
+        content. So anything with an embed is somebody else's business, and
+        nothing has to be tracked across processes to know it.
 
         Never fatal, and swallowed whole: this runs on the way to posting, and a
         channel whose pins cannot be read is a feed that goes up beside its
@@ -324,7 +333,7 @@ class DiscordTicker:
 
         try:
             for pinned in await target.pins():
-                if pinned.author.id != me.id:
+                if pinned.author.id != me.id or pinned.embeds:
                     continue
 
                 await pinned.delete()

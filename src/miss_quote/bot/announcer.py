@@ -42,13 +42,21 @@ not extend a bot the ceiling it sells to people, but an embed description holds
 4096 and one message holds 6000 across its embeds. An evening's account is one
 message at almost any length it runs to, and one message is one edit.
 
-Past that it is more than one message, and two messages do not stay together: a
-message is sent at the bottom of the channel, so a continuation posted an hour
-after the part it continues arrives under whatever was said in between. An
-account that outgrows one message is therefore not extended — the whole of it
-goes up again as a contiguous run, and the message it started in is edited into a
-pointer at where it went. One breadcrumb where the evening began and one run
-holding the account, rather than a trail of half-accounts. See `_moved`.
+Past that it is more than one message, and an account is rewritten in place for
+as long as it still fits the messages it is in — three edits to three messages,
+and the evening stays where a reader last saw it. What cannot be done is
+extending it: the message it would need next is sent to the bottom of the
+channel, so a continuation written an hour after the part it continues arrives
+under whatever was said in between. An account that outgrows its run is therefore
+posted again whole and the old run comes down. See `_replaced`.
+
+**The head of a run is pinned**, which is what makes that affordable. Nothing has
+to be left at the old address pointing at the new one, because a reader looks an
+account up in the pin list rather than where they last saw it — and deleting a
+message unpins it, so a run that is replaced takes its own pin off on the way
+out. It is also what tells `bot.ticker` apart from this in a channel they share:
+the ticker sweeps pins it left behind and skips anything carrying an embed, which
+an account always has and a feed never does.
 """
 
 from __future__ import annotations
@@ -89,14 +97,12 @@ WORD_BREAK = " "
 # paused anyway and only falls back to a word when it has nothing else.
 BOUNDARIES = (PARAGRAPH_BREAK, LINE_BREAK, WORD_BREAK)
 
-# What is left where an account used to be, once it has outgrown the message it
-# started in. Its own title, so the breadcrumb still says which evening it is
-# about, and a link rather than a copy: two of anything is what this is here to
-# stop.
-MOVED = (
-    "This evening's account outgrew one message. "
-    "The whole of it is [further down]({link})."
-)
+# What a refused pin has to ask for, and the one refusal that says something
+# about the channel rather than about the request: a channel with fifty pins
+# already has nowhere to put another, which is a pin list to go and empty rather
+# than a permission to go and grant.
+PIN_PERMISSION = "Pin Messages"
+PINS_FULL = 30003
 
 # What a refused post has to ask for, as the permissions are named in the client.
 #
@@ -120,16 +126,12 @@ REFUSED = 400
 
 @dataclass
 class Account:
-    """One evening's account, as the messages currently holding it."""
+    """One evening's account, as the run of messages holding it."""
 
-    # The message the account was first posted in. Never deleted while the
-    # account lives: once the account has moved, this is the only thing in the
-    # channel that says where it went, and a reader who scrolled to where they
-    # last saw it is looking straight at it.
-    origin: Any
-
-    # Every message the account occupies now, oldest first. The same list as
-    # `[origin]` until the account outgrows one message.
+    # Every message the account occupies, oldest first. The first of them is
+    # pinned, which is what makes an account findable without scrolling and what
+    # removes the need to leave anything behind when the run is replaced: a
+    # reader looks in the pin list rather than at wherever they last saw it.
     run: list[Any] = field(default_factory=list)
 
 
@@ -218,12 +220,16 @@ class DiscordAnnouncer:
         if held is None:
             return await self._posted(server, channel, target, key, pages)
 
-        # One message holding one message's worth is the only shape that can be
-        # rewritten where it stands. Anything else moves; see `_moved`.
-        if len(pages) == 1 and len(held.run) == 1:
-            return await self._rewritten(server, channel, target, key, held, pages[0])
+        # An account that still fits the messages it is in is rewritten where it
+        # stands, however many that is: three edits to three messages leave the
+        # evening where a reader last saw it. One that has outgrown them cannot
+        # be — the message it needs next would be sent to the bottom of the
+        # channel, an unknown distance below the part it continues — so the run
+        # is replaced whole. See `_replaced`.
+        if len(pages) <= len(held.run):
+            return await self._rewritten(server, channel, target, key, held, pages)
 
-        return await self._moved(server, channel, target, key, held, pages)
+        return await self._replaced(server, channel, target, key, held, pages)
 
     async def _posted(
         self,
@@ -238,8 +244,10 @@ class DiscordAnnouncer:
         if run is None:
             return False
 
-        self._accounts[key] = Account(origin=run[0], run=run)
+        self._accounts[key] = Account(run=run)
         logger.info("Posted an account for %s to '#%s'.", server, channel)
+
+        await self._pinned(server, channel, run[0])
 
         return True
 
@@ -250,21 +258,47 @@ class DiscordAnnouncer:
         target: Any,
         key: tuple[str, str, str],
         held: Account,
-        page: list[discord.Embed],
+        pages: list[list[discord.Embed]],
     ) -> bool:
         """
-        Rewrite the message the account is already in, leaving it where it is.
+        Rewrite the messages the account is already in, leaving them where they are.
 
         The ordinary case, and the one the whole design is for: an evening that
-        emptied and refilled four times leaves the message it started in, saying
-        more each time.
+        emptied and refilled four times leaves the messages it started in,
+        saying more each time. The pin is untouched, because the message it
+        points at is untouched.
+
+        A shrinking account comes through here too. The messages it still needs
+        are rewritten and the surplus tail comes down, which keeps the pin where
+        it is — the head is the one message a shrink can never be the loss of.
 
         A message that has gone — deleted by somebody tidying the channel —
-        drops the account and is posted again. Somebody who deleted it has not
-        asked for the evening to go unrecorded.
+        drops the account and posts the whole run again. Somebody who deleted it
+        has not asked for the evening to go unrecorded.
         """
-        message = held.run[0]
+        for message, page in zip(held.run, pages):
+            if not await self._edited(server, channel, target, key, message, page):
+                return False
 
+        surplus = held.run[len(pages) :]
+        if surplus:
+            await self._taken(server, channel, surplus)
+            self._accounts[key] = Account(run=held.run[: len(pages)])
+
+        logger.info("Rewrote %s's account in '#%s'.", server, channel)
+
+        return True
+
+    async def _edited(
+        self,
+        server: str,
+        channel: str,
+        target: Any,
+        key: tuple[str, str, str],
+        message: Any,
+        page: list[discord.Embed],
+    ) -> bool:
+        """One message of a run, rewritten, or the whole account posted again."""
         try:
             await message.edit(embeds=page)
         except discord.NotFound:
@@ -299,11 +333,9 @@ class DiscordAnnouncer:
             )
             return False
 
-        logger.info("Rewrote %s's account in '#%s'.", server, channel)
-
         return True
 
-    async def _moved(
+    async def _replaced(
         self,
         server: str,
         channel: str,
@@ -313,88 +345,81 @@ class DiscordAnnouncer:
         pages: list[list[discord.Embed]],
     ) -> bool:
         """
-        Post the account again as one run, and point the old message at it.
+        Post the account again as one run, take the old one down, and pin the head.
 
-        For an account that no longer fits where it was. Extending it in place
-        is not on offer — the extra message would be sent at the bottom of the
-        channel, an unknown distance below the part it continues, and two halves
-        of one account with other people's conversation between them read as two
-        fragments.
+        For an account that no longer fits the messages it is in. Extending it
+        where it stands is not on offer — the extra message would be sent to the
+        bottom of the channel, an unknown distance below the part it continues,
+        and two halves of one account with other people's conversation between
+        them read as two fragments.
 
-        The order matters. The run goes up first, so a failure anywhere in it
-        leaves the account exactly where it was rather than pointing at
-        something that was never posted. Only once the whole run has landed does
-        the original become a pointer and the messages it superseded come down.
+        Nothing is left behind at the old address and nothing needs to be. The
+        head of the run is pinned, so an account that moves is still one entry in
+        the pin list rather than something a reader has to find again.
 
-        What the original becomes is a pointer rather than a copy, and it is the
-        original every time rather than the last one: an evening that keeps
-        outgrowing its message leaves one breadcrumb where it began and one run
-        at the bottom, not a chain of them.
+        **The new run goes up before the old one comes down.** A failure anywhere
+        in it leaves the account exactly where it was, which is the right way to
+        be wrong: the alternative ordering spends a window with the evening
+        deleted and its replacement unwritten, and a failure in that window costs
+        the channel its only copy.
         """
         run = await self._run(server, channel, target, pages)
         if run is None:
             return False
 
-        await self._pointed(server, channel, held.origin, run[0])
-        await self._superseded(server, channel, held)
+        await self._taken(server, channel, held.run)
 
-        self._accounts[key] = Account(origin=held.origin, run=run)
+        self._accounts[key] = Account(run=run)
         logger.info(
-            "%s's account outgrew its message in '#%s'; moved it and left a pointer.",
+            "%s's account outgrew its messages in '#%s'; posted it again as %d.",
             server,
             channel,
+            len(run),
         )
+
+        await self._pinned(server, channel, run[0])
 
         return True
 
-    async def _pointed(
-        self, server: str, channel: str, origin: Any, head: Any
-    ) -> None:
+    async def _pinned(self, server: str, channel: str, message: Any) -> None:
         """
-        Turn the message an account started in into a link to where it went.
+        Pin the head of a run, so an account is reachable without scrolling.
 
-        Never fatal. The account is up and readable, which is what was asked
-        for; a stale copy of an earlier draft above it is untidy and is not
-        worth reporting a failure over, since nothing is going to retry.
+        Never fatal. The account is up, which is the thing that was asked for; an
+        account that has to be scrolled to is worse than one in the pin list and
+        much better than none. A channel with no room left for a pin is worth its
+        own line, because what has to be done about it is emptying a pin list
+        rather than granting a permission.
 
-        The title is kept, so the breadcrumb still says which evening it is
-        about — and so that a revise after a restart, reading the channel for
-        its own title, finds the run rather than the pointer: the run is newer,
-        and the newest match is what it takes.
+        Deleting a message unpins it, so a replaced run takes its own pin off the
+        list on the way out and nothing has to be unpinned by hand.
         """
-        title = origin.embeds[0].title if origin.embeds else None
-
         try:
-            await origin.edit(
-                embeds=[
-                    discord.Embed(
-                        title=title,
-                        description=MOVED.format(link=head.jump_url),
-                        colour=ACCOUNT_COLOUR,
-                    )
-                ]
-            )
-        except (discord.HTTPException, OSError, asyncio.TimeoutError) as exc:
+            await message.pin()
+        except discord.Forbidden:
             logger.warning(
-                "Could not point %s's old account in '%s' at where it went: %s",
-                server,
+                "Not allowed to pin in '%s'; %s's accounts will not be pinned. "
+                "The bot needs %s on the channel — pinning has its own permission "
+                "and Manage Messages does not carry it.",
                 channel,
-                exc,
+                server,
+                PIN_PERMISSION,
             )
+        except discord.HTTPException as exc:
+            if exc.code == PINS_FULL:
+                logger.warning(
+                    "'%s' has no room for another pin, so %s's account stays "
+                    "unpinned. Something has to come off the pin list.",
+                    channel,
+                    server,
+                )
+                return
 
-    async def _superseded(self, server: str, channel: str, held: Account) -> None:
-        """
-        Take down what the account used to occupy, apart from where it began.
-
-        The origin stays and has just become the pointer. Everything else is a
-        part of an account that has been posted again in full, and leaving it up
-        is the duplication this exists to stop.
-        """
-        await self._taken(
-            server,
-            channel,
-            [message for message in held.run if message.id != held.origin.id],
-        )
+            logger.warning("Could not pin the account in '%s': %s", channel, exc)
+        except (OSError, asyncio.TimeoutError) as exc:
+            logger.warning(
+                "Could not reach Discord to pin the account in '%s': %s", channel, exc
+            )
 
     async def _adopted(
         self, server: str, channel: str, target: Any, title: str, since: datetime
@@ -407,23 +432,16 @@ class DiscordAnnouncer:
         message is held in memory, so nothing came back for it, and the next
         seal would post a second account of the same night beside the first.
 
-        The **newest** message carrying the title, because an account that has
-        already moved once left an older message carrying the same title
-        pointing at it. Newest is always the live one; see `_pointed`.
+        The **newest** message carrying the title. A run that was replaced took
+        its predecessor down with it, so in a tidy channel there is only one —
+        but a replacement that failed partway, or a process killed between the
+        two, can leave an older one behind, and the newest is the live one.
 
         Messages newer than it and contiguous with it are the rest of the run —
         the bot's own, untitled, and unbroken by anybody else's message, which
         is what a run posted in one go looks like from the outside. Anything
         else ends it, because a gap means the messages are no longer one thing
         a reader would read straight through.
-
-        What is adopted as the origin is the message the account is in **now**
-        rather than the one it started in, which the channel no longer says.
-        The consequence is a chain: an account that had already moved before the
-        restart and moves again after it leaves a pointer at a pointer. Two hops
-        rather than one, only after a restart, and every link still leads to the
-        account — which is a better trade than reading a channel's whole history
-        to find where an evening began.
 
         Never fatal, and nothing is adopted from a channel that will not answer:
         posting a second account is worse than the alternative in a tidy channel
@@ -445,7 +463,7 @@ class DiscordAnnouncer:
                         channel,
                     )
 
-                    return Account(origin=message, run=[message, *reversed(newer)])
+                    return Account(run=[message, *reversed(newer)])
 
                 if _continues(message, me):
                     newer.append(message)

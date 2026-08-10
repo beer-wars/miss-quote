@@ -34,8 +34,10 @@ class Message:
         undeletable: Exception | None = None,
         unpinnable: Exception | None = None,
         author: int = BOT_ID,
+        embeds: tuple = (),
     ) -> None:
         self.content = content
+        self.embeds = list(embeds)
         self.edits: list[str] = []
         self.deleted = False
         self.pinned = False
@@ -355,6 +357,38 @@ async def test_a_feed_left_pinned_by_a_dead_process_is_swept():
     await _ticker(channel).show(ALIAS, CHANNEL, SECOND)
 
     assert orphan.deleted
+
+
+async def test_a_pinned_account_is_left_alone():
+    """
+    The announcer pins the head of every account it files, in this same channel.
+
+    An account is what the evening left behind rather than something the feed is
+    entitled to tidy, and the two are told apart structurally: a feed is content
+    with no embed, an account is embeds with no content.
+    """
+    account = Message("", embeds=(object(),))
+    account.pinned = True
+    channel = Channel(pinned=(account,))
+
+    await _ticker(channel).show(ALIAS, CHANNEL, FIRST)
+
+    assert not account.deleted
+    assert account.pinned
+
+
+async def test_a_stale_feed_is_still_swept_from_beside_an_account():
+    """The sweep still does its job in a channel that holds both."""
+    stale = Message(FIRST)
+    stale.pinned = True
+    account = Message("", embeds=(object(),))
+    account.pinned = True
+    channel = Channel(pinned=(account, stale))
+
+    await _ticker(channel).show(ALIAS, CHANNEL, SECOND)
+
+    assert stale.deleted
+    assert not account.deleted
 
 
 async def test_somebody_elses_pinned_message_is_left_alone():
