@@ -98,6 +98,21 @@ MOVED = (
     "The whole of it is [further down]({link})."
 )
 
+# What a refused post has to ask for, as the permissions are named in the client.
+#
+# Two of them, and the second is the one to read twice: an embed is not message
+# content, and a bot allowed to talk in a channel is not thereby allowed to put
+# an embed in it. Send Messages alone was enough while an account was text, so a
+# channel that has been working for months can start refusing on nothing but a
+# release. Naming both is what stops a log line sending somebody to check the
+# permission that was never the problem.
+POST_PERMISSIONS = "Send Messages and Embed Links"
+
+# What reading the channel for an account a restart left behind asks for. Its
+# own line because what it costs to omit is not a failure anybody sees — the
+# account goes up, beside the one already there.
+HISTORY_PERMISSION = "Read Message History"
+
 # A request Discord will not accept however many times it is sent — the same
 # distinction `bot.topic` draws, and for the same reason.
 REFUSED = 400
@@ -265,9 +280,10 @@ class DiscordAnnouncer:
             logger.warning(
                 "Not allowed to edit in '%s'; %s will not get its accounts there. "
                 "Editing its own message takes no permission of its own, so what "
-                "has gone is the bot's access to the channel.",
+                "is missing is %s on the channel.",
                 channel,
                 server,
+                POST_PERMISSIONS,
             )
             return False
         except discord.HTTPException as exc:
@@ -435,6 +451,15 @@ class DiscordAnnouncer:
                     newer.append(message)
                 else:
                     newer.clear()
+        except discord.Forbidden:
+            logger.warning(
+                "Not allowed to read '%s'; %s cannot find an account it left there "
+                "before a restart and will post another beside it. The bot needs "
+                "%s on the channel.",
+                channel,
+                server,
+                HISTORY_PERMISSION,
+            )
         except (discord.HTTPException, OSError, asyncio.TimeoutError) as exc:
             logger.warning(
                 "Could not read what %s already has in '%s': %s", server, channel, exc
@@ -511,9 +536,10 @@ class DiscordAnnouncer:
         except discord.Forbidden:
             logger.warning(
                 "Not allowed to post in '%s'; %s will not get its accounts there. "
-                "The bot needs Send Messages on the channel.",
+                "The bot needs %s on the channel.",
                 name,
                 server,
+                POST_PERMISSIONS,
             )
         except discord.HTTPException as exc:
             if exc.status == REFUSED:
