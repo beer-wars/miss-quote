@@ -188,12 +188,16 @@ class Ticker(Protocol):
         """
         Put text in a channel and keep rewriting the same message with it.
 
-        The third of the three, and the one the other two cannot be: `Topic` is
-        one line that replaces the last one and holds no history, `Announcer`
-        adds a message that joins the ones before it, and this holds one message
-        and edits it in place. What it is for is text worth reading while it is
-        current and not worth a channel full of messages afterwards — a running
-        transcript being the one that exists.
+        The third of the three, and no longer told apart from `Announcer` by
+        whether it edits: both hold a message and rewrite it. What separates
+        them is **when the text is worth reading**. An account is worth reading
+        afterwards, so it is left up and joins what a channel scrolls back
+        through. This is worth reading only while it is current, so it is
+        pinned while it lives and deleted when it stops — a running transcript
+        being the one thing that wants that.
+
+        `Topic` is the one neither of them can be: a single line under a voice
+        channel's name, holding no history at all.
 
         Whoever implements this owns the message: which one it is, when a new
         one has to be posted because the old one is gone, and what happens to it

@@ -2,11 +2,19 @@
 Keeping one message in a text channel and rewriting it in place.
 
 The third way words leave this process, and the counterpart to `bot.topic` and
-`bot.announcer`: a topic is one line under a voice channel's name, an
-announcement is a message that joins the ones before it, and this is one message
-that keeps being edited. It is for text worth reading while it is current and not
-worth a channel full of messages afterwards — a running transcript being the one
-thing that wants it.
+`bot.announcer`. A topic is one line under a voice channel's name and holds no
+history. The other two both keep one message and rewrite it, so editing is not
+what tells them apart — **how long the text stays worth reading is**. An account
+of an evening is read afterwards, so the announcer leaves it up. A running
+transcript is worth reading while the room is talking and is clutter by morning,
+so this pins it while it lives and deletes it when the room empties.
+
+That difference is why the two draw opposite conclusions from the same limits.
+An account is long, rewritten a handful of times a night, and goes in an embed so
+that it stays one message. This is short by construction — `transcript_lines`
+of them, each cut to `TRANSCRIPT_LINE_LIMIT` — and rewritten every couple of
+seconds, so it stays message content: at that cadence what an embed would buy in
+ceiling it would spend in repainting a container nobody asked to have redrawn.
 
 **The message is pinned while it is live**, which is what makes it reachable
 while a room is talking rather than something to scroll for. Deleting it unpins
