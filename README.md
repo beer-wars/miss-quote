@@ -24,7 +24,7 @@ Walk into a film line and it says the line out loud, then asks the room where it
 
 **This container needs no GPU.** Transcription and synthesis are calls to [Wyoming](https://github.com/rhasspy/wyoming) servers, and summaries are a call to any OpenAI-compatible endpoint — those are what want the hardware. Budget for one, and let this share it. The [About page](https://miss-quote.wars.beer/about/) has the shape of the pipeline.
 
-It began as a hard fork of [Leehyunbin0131/Discord-Realtime-STT-Bot](https://github.com/Leehyunbin0131/Discord-Realtime-STT-Bot).
+It began as a hard fork of [Leehyunbin0131/Discord-Realtime-STT-Bot](https://github.com/Leehyunbin0131/Discord-Realtime-STT-Bot), which ran `faster-whisper` on a local GPU.
 
 ## Made with vibes, not love
 
