@@ -73,6 +73,13 @@ from miss_quote.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Discord's ceiling on one message's content. Not a setting: it is the API's
+# number. It lives here rather than in either of the two `bot` modules that
+# enforce it because it is part of what `Ticker` promises a caller, and a caller
+# that has to trim to it cannot import from `bot` without turning the dependency
+# between the layers into a circle.
+MESSAGE_LIMIT = 2000
+
 
 @runtime_checkable
 class Speaker(Protocol):
@@ -184,6 +191,13 @@ class Announcer(Protocol):
 class Ticker(Protocol):
     """Somewhere a tool can keep one message that goes on changing."""
 
+    # How much one message holds. Published because trimming to it is the
+    # caller's job and cannot be delegated: what has to come off is a whole
+    # line of whatever the caller is showing, and only the caller knows where
+    # its lines are or which of them it cannot afford to lose. An implementation
+    # still enforces the ceiling underneath, for a caller that gets it wrong.
+    limit: int
+
     async def show(self, server: str, channel: str, text: str) -> bool:
         """
         Put text in a channel and keep rewriting the same message with it.
@@ -227,7 +241,13 @@ class SilentTicker:
 
     The runner's default, so a tool that has something to show always has one
     and never has to check. False, because nothing was shown.
+
+    It reports the same ceiling as the real one rather than something unbounded,
+    so a tool trims identically whether or not anybody is watching — a bug that
+    only appears once a channel is configured is a bug nobody finds.
     """
+
+    limit = MESSAGE_LIMIT
 
     async def show(self, server: str, channel: str, text: str) -> bool:
         logger.debug("Nowhere to show %d characters for %s.", len(text), server)

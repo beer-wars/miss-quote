@@ -58,7 +58,11 @@ whether one is coming — see `Summary._clause`.
 
 **Showing it as it is said.** A room may also watch itself: `post_transcripts`
 keeps the last ten lines in one message in the same text channel, rewritten as
-the room talks rather than posted line by line. It is off unless a channel asks,
+the room talks rather than posted line by line. Ten is a maximum rather than a
+promise — a ring is bounded by lines and a message by characters, so a room
+talking in paragraphs shows fewer of them, oldest dropped first. See
+`_fitting`, and note that the alternative is not showing nine lines instead of
+ten: cutting the block at a character takes the fence off the front of it. It is off unless a channel asks,
 and deliberately so — a transcript on disk is a file with a retention window,
 while the same words in a text channel are permanent, searchable, and readable by
 people who were never in the room.
@@ -101,7 +105,7 @@ import asyncio
 import re
 import time
 from collections import deque
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -1268,7 +1272,7 @@ class Summary(Tool):
         if not held:
             return
 
-        body = _fenced(held)
+        body = _fenced(_fitting(held, self.ticker.limit))
         if body == self._showing.get(monitored.name):
             return
 
@@ -1477,6 +1481,35 @@ def _said(utterance: Utterance) -> str:
         said = said[: TRANSCRIPT_LINE_LIMIT - len(ELLIPSIS)] + ELLIPSIS
 
     return TRANSCRIPT_LINE.format(user=utterance.user, text=said)
+
+
+def _fitting(lines: Sequence[str], limit: int) -> list[str]:
+    """
+    As many of the newest lines as one message holds, oldest dropped first.
+
+    The ring is bounded by **count** and a message is bounded by **characters**,
+    and ten people saying a sentence each is a different size from ten people
+    reading a paragraph each. So `transcript_lines` is how many lines the feed
+    may show rather than how many it always shows, and what comes off when they
+    will not fit is the line at the top — which is the one that was about to
+    scroll off anyway.
+
+    Whole lines, because the alternative is cutting one. A body cut at a
+    character keeps its **tail**, and the first thing at the front of this one is
+    the fence: cutting there leaves the closing fence with nothing to close, so
+    the feed stops being a code block, loses the monospace the column of names is
+    read in, and hands whatever the ASR returned back to Markdown to interpret.
+
+    At least one line always survives, however long it is. A feed showing one
+    over-long line is a feed; `Ticker` cuts what it cannot take underneath this,
+    which for a line already capped at `TRANSCRIPT_LINE_LIMIT` never happens.
+    """
+    shown = list(lines)
+
+    while len(shown) > 1 and len(_fenced(shown)) > limit:
+        shown.pop(0)
+
+    return shown
 
 
 def _fenced(lines: Iterable[str]) -> str:
