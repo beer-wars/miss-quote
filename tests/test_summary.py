@@ -160,17 +160,34 @@ class BlockingTts(FakeTts):
 
 
 class FakeAnnouncer:
-    """Somewhere to post, remembering what it was given."""
+    """
+    Somewhere to keep an account, remembering what each one ended up saying.
+
+    Accounts rather than a list of posts, because what a sitting is judged on is
+    how many of them a channel is left holding: a tool that posted a fresh
+    account on every seal and one that rewrote the same account both look
+    identical from the last thing sent.
+    """
 
     def __init__(self, channels: tuple[str, ...] = (POSTING_CHANNEL,)) -> None:
-        self.posts: list[tuple[str, str]] = []
+        self.accounts: dict[tuple[str, str], str] = {}
+        self.revisions: list[tuple[str, str, str]] = []
         self._channels = channels
+
+    @property
+    def posts(self) -> list[tuple[str, str]]:
+        """What is in each channel now, as the announcer left it."""
+        return [(channel, text) for (channel, _), text in self.accounts.items()]
 
     def resolve(self, server: str, channel: str):
         return channel if channel in self._channels else None
 
-    async def post(self, server: str, channel: str, text: str) -> bool:
-        self.posts.append((channel, text))
+    async def revise(
+        self, server: str, channel: str, title: str, text: str, since
+    ) -> bool:
+        self.accounts[(channel, title)] = f"{title}\n\n{text}"
+        self.revisions.append((channel, title, text))
+
         return True
 
 
@@ -574,6 +591,71 @@ async def test_the_post_is_headed_with_when_the_sitting_started(
 
     _, posted = announcer.posts[0]
     assert OPENED_THE_SITTING.strftime("%H:%M") in posted
+
+
+async def test_a_sitting_leaves_one_account_in_the_channel(
+    summaries, model, scheduled
+):
+    """
+    The channel ends an evening the way the disk does.
+
+    Every seal inside the window revises the same account rather than posting
+    beside the last one, so a room that came and went is not four messages that
+    all say they are the same evening — they are headed from when the sitting
+    opened, so nothing about them tells them apart.
+    """
+    scheduled(WEDNESDAY_EVENING)
+    announcer = FakeAnnouncer()
+    tool, _ = _tool(announcer=announcer, minimum_utterances=1)
+    model.answers = ["just the first half", "the whole evening"]
+
+    await tool.handle_finished(
+        _sat(summaries, OPENED_THE_SITTING, said="the first half")
+    )
+    await tool.handle_finished(_sat(summaries, SEALED_LATER, said="the second half"))
+
+    assert len(announcer.accounts) == 1
+    assert [text for _, _, text in announcer.revisions] == [
+        "just the first half",
+        "the whole evening",
+    ]
+
+    _, posted = announcer.posts[0]
+    assert "the whole evening" in posted
+
+
+async def test_every_seal_of_a_sitting_names_the_same_account(
+    summaries, model, scheduled
+):
+    """What tells the announcer it is replacing rather than adding is the title."""
+    scheduled(WEDNESDAY_EVENING)
+    announcer = FakeAnnouncer()
+    tool, _ = _tool(announcer=announcer, minimum_utterances=1)
+
+    await tool.handle_finished(
+        _sat(summaries, OPENED_THE_SITTING, said="the first half")
+    )
+    await tool.handle_finished(_sat(summaries, SEALED_LATER, said="the second half"))
+
+    assert len({title for _, title, _ in announcer.revisions}) == 1
+
+
+async def test_a_session_outside_every_window_gets_an_account_of_its_own(
+    summaries, model, scheduled
+):
+    """It is a different evening, so it must not replace the scheduled one."""
+    scheduled(WEDNESDAY_EVENING)
+    announcer = FakeAnnouncer()
+    tool, _ = _tool(announcer=announcer, minimum_utterances=1)
+
+    await tool.handle_finished(
+        _sat(summaries, OPENED_THE_SITTING, said="the scheduled evening")
+    )
+    await tool.handle_finished(
+        _sat(summaries, OFF_THE_SCHEDULE, said="the one somebody started")
+    )
+
+    assert len(announcer.accounts) == 2
 
 
 async def test_a_session_opened_outside_every_window_is_its_own(

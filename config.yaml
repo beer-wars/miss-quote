@@ -573,6 +573,13 @@ servers:
               # session that opened outside every window — one started by hand —
               # is summarized on its own, as it always was.
               #
+              # That holds for `channel:` as well as for the file. The account
+              # is posted once and the message is edited as the evening grows,
+              # so a room that came and went four times leaves one message
+              # rather than four that all say they are the same evening. An
+              # account too long for one message moves to a new one and leaves
+              # a link behind where it was.
+              #
               # schedule:
               #   - Wed 17:00-00:00
 
