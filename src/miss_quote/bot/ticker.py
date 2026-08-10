@@ -2,11 +2,20 @@
 Keeping one message in a text channel and rewriting it in place.
 
 The third way words leave this process, and the counterpart to `bot.topic` and
-`bot.announcer`: a topic is one line under a voice channel's name, an
-announcement is a message that joins the ones before it, and this is one message
-that keeps being edited. It is for text worth reading while it is current and not
-worth a channel full of messages afterwards — a running transcript being the one
-thing that wants it.
+`bot.announcer`. A topic is one line under a voice channel's name and holds no
+history. The other two both keep one message and rewrite it, so editing is not
+what tells them apart — **how long the text stays worth reading is**. An account
+of an evening is read afterwards, so the announcer leaves it up. A running
+transcript is worth reading while the room is talking and is clutter by morning,
+so this pins it while it lives and deletes it when the room empties.
+
+That difference is why the two draw opposite conclusions from the same limits.
+An account is long and rewritten a handful of times a night, so it goes in embeds
+and buys the room to stay one message at almost any length an evening runs to.
+This is short by construction — at most `transcript_lines` of them, and trimmed
+to fit a message by dropping the oldest — and rewritten every couple of seconds,
+so it stays message content: at that cadence what an embed would buy in ceiling
+it would spend in repainting a container nobody asked to have redrawn.
 
 **The message is pinned while it is live**, which is what makes it reachable
 while a room is talking rather than something to scroll for. Deleting it unpins
@@ -21,8 +30,12 @@ next post reads the channel's pins and takes down whatever this bot left there.
 Fifty pins is a ceiling a slow leak would eventually reach; a leak that is swept
 on the way past never gets there. See `_swept`.
 
-This bot pins nothing else. If it ever does, `_swept` is the line that has to
-learn the difference.
+This bot pins one other thing, and the two spend from the same fifty:
+`bot.announcer` pins the head of every account it files, in this same channel,
+and ages the older ones off the list under its own `pinned_sessions`. `_swept`
+tells them apart by their embeds — an account has them and a feed does not —
+rather than by anything either has to remember about the other across a
+restart.
 
 **Only the pin needs a permission.** Posting needs Send Messages, and everything
 after it is the bot's own message — editing one and deleting one are ungoverned,
@@ -41,8 +54,11 @@ tool that calls this waits out its own interval after each write rather than
 writing on a fixed tick. See `Summary._ticking`.
 
 Whatever is shown is cut to Discord's message limit rather than split across
-several, unlike an announcement: what is being shown is the current state of
-something, and a state cut in half across two messages is two states.
+several, unlike an account: what is being shown is the current state of
+something, and a state cut in half across two messages is two states. The cut
+here is a backstop — a caller that has lines is expected to have dropped whole
+ones against `limit` before it gets here, since cutting a fenced block at a
+character costs it the fence it opens with.
 """
 
 from __future__ import annotations
@@ -52,8 +68,7 @@ from typing import Any
 
 import discord
 
-from miss_quote.bot.announcer import MESSAGE_LIMIT
-from miss_quote.tools.base import Finder
+from miss_quote.tools.base import MESSAGE_LIMIT, Finder
 from miss_quote.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -85,6 +100,10 @@ PIN_PERMISSION = "Pin Messages"
 
 class DiscordTicker:
     """Holds one message per channel and edits it as a tool changes its mind."""
+
+    # What `Ticker` promises a caller, so that a tool trims to the same number
+    # this enforces rather than to one of its own that could drift from it.
+    limit = MESSAGE_LIMIT
 
     def __init__(self, finder: Finder) -> None:
         # The announcer, which already resolves a channel name against the
@@ -309,10 +328,17 @@ class DiscordTicker:
         pin list is where those are findable, which is the whole reason the live
         message is pinned at all.
 
-        Only this bot's own messages, and this bot pins nothing else — a pin
-        somebody put on a message of somebody else's is not ours to take off,
-        and one it put on a message of the bot's is a person pinning something
-        the bot is about to delete anyway.
+        Only this bot's own messages, and only the ones that are feeds. Both
+        halves matter, and the second is newer than the first: a pin somebody put
+        on somebody else's message is not ours to take off, and the bot's own
+        pinned messages are no longer all feeds. `bot.announcer` pins the head of
+        every account it files, in this same channel, and an account is a thing
+        the evening left behind rather than something this is entitled to tidy.
+
+        What separates them is structural rather than guessed at. A feed is
+        message content and carries no embed; an account is embeds and carries no
+        content. So anything with an embed is somebody else's business, and
+        nothing has to be tracked across processes to know it.
 
         Never fatal, and swallowed whole: this runs on the way to posting, and a
         channel whose pins cannot be read is a feed that goes up beside its
@@ -324,7 +350,7 @@ class DiscordTicker:
 
         try:
             for pinned in await target.pins():
-                if pinned.author.id != me.id:
+                if pinned.author.id != me.id or pinned.embeds:
                     continue
 
                 await pinned.delete()
@@ -353,11 +379,17 @@ def trimmed(text: str, limit: int = MESSAGE_LIMIT) -> str:
     """
     One body as much of it as Discord will take, cut at the end.
 
-    Cut rather than split, unlike an announcement. What is being shown is the
-    current state of something and the newest line is the one being watched, so
-    a body over the limit loses its front rather than becoming a second message
-    nobody is looking at. The caller does the real trimming, which is per line
-    and knows what a line is; this is the ceiling underneath it.
+    Cut rather than split, unlike an account. What is being shown is the current
+    state of something and the newest line is the one being watched, so a body
+    over the limit loses its front rather than becoming a second message nobody
+    is looking at.
+
+    **This is the backstop, not the trimming.** Cutting at a character is the
+    wrong tool for anything with structure at the front of it — a fenced block
+    loses the fence that opens it and stops being a block at all — so a caller
+    with lines trims to `Ticker.limit` itself and drops whole ones. See
+    `Summary._fitting`. What is left for this is a caller that did not, which is
+    a rendering nobody wants rather than a message Discord refuses.
     """
     if len(text) <= limit:
         return text

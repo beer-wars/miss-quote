@@ -58,7 +58,11 @@ whether one is coming — see `Summary._clause`.
 
 **Showing it as it is said.** A room may also watch itself: `post_transcripts`
 keeps the last ten lines in one message in the same text channel, rewritten as
-the room talks rather than posted line by line. It is off unless a channel asks,
+the room talks rather than posted line by line. Ten is a maximum rather than a
+promise — a ring is bounded by lines and a message by characters, so a room
+talking in paragraphs shows fewer of them, oldest dropped first. See
+`_fitting`, and note that the alternative is not showing nine lines instead of
+ten: cutting the block at a character takes the fence off the front of it. It is off unless a channel asks,
 and deliberately so — a transcript on disk is a file with a retention window,
 while the same words in a text channel are permanent, searchable, and readable by
 people who were never in the room.
@@ -101,7 +105,7 @@ import asyncio
 import re
 import time
 from collections import deque
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -144,6 +148,8 @@ ADDRESS_WINDOW_SECONDS_KEY = "address_window_seconds"
 CLAUSE_WINDOW_SECONDS_KEY = "clause_window_seconds"
 POST_TRANSCRIPTS_KEY = "post_transcripts"
 TRANSCRIPT_LINES_KEY = "transcript_lines"
+PINNED_SESSIONS_KEY = "pinned_sessions"
+TRANSCRIPT_LINE_LIMIT_KEY = "transcript_line_limit"
 TRANSCRIPT_REFRESH_SECONDS_KEY = "transcript_refresh_seconds"
 
 # Everything a channel block may say. Anything else in one is a setting nothing
@@ -175,6 +181,8 @@ CHANNEL_KEYS = (
     POST_TRANSCRIPTS_KEY,
     TRANSCRIPT_LINES_KEY,
     TRANSCRIPT_REFRESH_SECONDS_KEY,
+    TRANSCRIPT_LINE_LIMIT_KEY,
+    PINNED_SESSIONS_KEY,
 )
 
 # How long a retelling has to sound like before it is worth the tokens, and how
@@ -351,6 +359,14 @@ DEFAULT_TRANSCRIPT_LINES = 10
 # a message rather than a channel status.
 DEFAULT_TRANSCRIPT_REFRESH_SECONDS = 2.0
 
+# How many evenings stay pinned. A channel holds fifty pins and an account is
+# one of them per sitting, so left alone they would fill the list in a year of
+# weekly sessions and every account after that would go up unpinned. Five is
+# the last month or so of a room that meets weekly, which is as far back as
+# anybody reaches for an evening without knowing its date — and past that the
+# account is still there to scroll to, and still on disk.
+DEFAULT_PINNED_SESSIONS = 5
+
 # The fastest a server may ask for. discord.py sleeps out a rate limit rather
 # than raising, so a file asking for a twentieth of a second does not fail — it
 # silently lags, and a feed that reads as live while running a minute behind is
@@ -358,10 +374,23 @@ DEFAULT_TRANSCRIPT_REFRESH_SECONDS = 2.0
 # what zero means everywhere else here.
 MINIMUM_TRANSCRIPT_REFRESH_SECONDS = 0.25
 
-# How much of one utterance goes up. Long enough for a sentence and short enough
-# that one person reading out a paragraph cannot push the other nine lines off
-# the message.
-TRANSCRIPT_LINE_LIMIT = 180
+# How much of one utterance goes up, when a channel asks for a cap at all.
+# Off by default: the feed drops whole lines off the top until it fits, so one
+# person reading a paragraph out costs the lines above it rather than the end of
+# their own sentence — which is what somebody watching for a mishearing wants to
+# see. A channel that would rather keep the ten short lines sets a number here.
+NO_LINE_LIMIT = -1
+DEFAULT_TRANSCRIPT_LINE_LIMIT = NO_LINE_LIMIT
+
+# The smallest cap that caps anything. Anything under it — the default, or the
+# nothing `_whole` clamps a negative to — is a channel asking for no cap.
+AT_LEAST_ONE_CHARACTER = 1
+
+# How much of a message the feed leaves unspent. Nothing needs it: the block is
+# built to fit and cut to fit underneath that. It is here because the cost of
+# being wrong is a message Discord refuses and a room watching a feed that
+# stopped moving, and the cost of being careful is a line of transcript.
+FEED_MARGIN = 100
 
 # How a line of the feed reads, and what it is wrapped in. A fence is what stops
 # a transcript of somebody saying "at everyone" from pinging the server, and
@@ -369,6 +398,10 @@ TRANSCRIPT_LINE_LIMIT = 180
 TRANSCRIPT_LINE = "{user}: {text}"
 TRANSCRIPT_FENCE = "```"
 TRANSCRIPT_BODY = TRANSCRIPT_FENCE + "\n{lines}\n" + TRANSCRIPT_FENCE
+
+# What wrapping costs, measured rather than counted by hand so that changing the
+# wrapper cannot leave a number behind that used to describe it.
+FENCE_OVERHEAD = len(TRANSCRIPT_BODY.format(lines=NOTHING))
 
 # What a fence cannot survive inside it, how a line that ran long says so, and
 # what holds a line's words apart once whatever the ASR put between them has
@@ -434,6 +467,8 @@ class Monitored:
     post_transcripts: bool
     transcript_lines: int
     transcript_refresh_seconds: float
+    transcript_line_limit: int
+    pinned_sessions: int
 
     @property
     def posting(self) -> bool:
@@ -817,7 +852,12 @@ class Summary(Tool):
         )
 
         await self.announcer.revise(
-            self.server, monitored.channel, header, text, opened
+            self.server,
+            monitored.channel,
+            header,
+            text,
+            opened,
+            monitored.pinned_sessions,
         )
 
     # ── reading it back ───────────────────────────
@@ -1206,7 +1246,7 @@ class Summary(Tool):
             held = deque(held or (), maxlen=monitored.transcript_lines)
             self._lines[monitored.name] = held
 
-        held.append(_said(utterance))
+        held.append(_said(utterance, monitored.transcript_line_limit))
 
     async def run(self) -> None:
         """
@@ -1268,7 +1308,7 @@ class Summary(Tool):
         if not held:
             return
 
-        body = _fenced(held)
+        body = _fenced(_fitting(held, self.ticker.limit - FEED_MARGIN))
         if body == self._showing.get(monitored.name):
             return
 
@@ -1422,6 +1462,16 @@ def _channel(
             raw.get(TRANSCRIPT_LINES_KEY),
             DEFAULT_TRANSCRIPT_LINES,
         ),
+        transcript_line_limit=_whole(
+            TRANSCRIPT_LINE_LIMIT_KEY,
+            raw.get(TRANSCRIPT_LINE_LIMIT_KEY),
+            DEFAULT_TRANSCRIPT_LINE_LIMIT,
+        ),
+        pinned_sessions=_whole(
+            PINNED_SESSIONS_KEY,
+            raw.get(PINNED_SESSIONS_KEY),
+            DEFAULT_PINNED_SESSIONS,
+        ),
         transcript_refresh_seconds=_paced(
             raw.get(TRANSCRIPT_REFRESH_SECONDS_KEY), DEFAULT_TRANSCRIPT_REFRESH_SECONDS
         ),
@@ -1456,7 +1506,7 @@ def _paced(value: Any, default: float) -> float:
     return MINIMUM_TRANSCRIPT_REFRESH_SECONDS
 
 
-def _said(utterance: Utterance) -> str:
+def _said(utterance: Utterance, limit: int = NO_LINE_LIMIT) -> str:
     """
     One utterance as a line of the feed.
 
@@ -1467,16 +1517,64 @@ def _said(utterance: Utterance) -> str:
     would be a second line of the block, and the ring counts lines rather than
     utterances.
 
-    Cut to a length that leaves the other nine lines on the message, since one
-    person reading a paragraph out loud should not clear the room's last minute
-    off the screen.
+    Uncut unless the channel asked for a cap. One person reading a paragraph out
+    loud costs the lines above theirs rather than the end of their own sentence,
+    which is the right way round for a feed somebody is watching to see what the
+    transcriber heard: a sentence that stops at 180 characters tells them
+    nothing about the words after it. A channel that would rather keep the short
+    lines above sets `transcript_line_limit`.
     """
     said = WORD_SEPARATOR.join(utterance.text.replace(BACKTICK, NOTHING).split())
 
-    if len(said) > TRANSCRIPT_LINE_LIMIT:
-        said = said[: TRANSCRIPT_LINE_LIMIT - len(ELLIPSIS)] + ELLIPSIS
+    if limit >= AT_LEAST_ONE_CHARACTER:
+        said = _cut(said, limit)
 
     return TRANSCRIPT_LINE.format(user=utterance.user, text=said)
+
+
+def _cut(text: str, room: str | int) -> str:
+    """As much of a line as fits, saying so where it did not all fit."""
+    room = int(room)
+
+    if len(text) <= room:
+        return text
+
+    return text[: room - len(ELLIPSIS)] + ELLIPSIS
+
+
+def _fitting(lines: Sequence[str], limit: int) -> list[str]:
+    """
+    As many of the newest lines as one message holds, oldest dropped first.
+
+    The ring is bounded by **count** and a message is bounded by **characters**,
+    and ten people saying a sentence each is a different size from ten people
+    reading a paragraph each. So `transcript_lines` is how many lines the feed
+    may show rather than how many it always shows, and what comes off when they
+    will not fit is the line at the top — which is the one that was about to
+    scroll off anyway.
+
+    Whole lines, because the alternative is cutting one. A body cut at a
+    character keeps its **tail**, and the first thing at the front of this one is
+    the fence: cutting there leaves the closing fence with nothing to close, so
+    the feed stops being a code block, loses the monospace the column of names is
+    read in, and hands whatever the ASR returned back to Markdown to interpret.
+
+    At least one line always survives, and if that one will not fit either it is
+    cut to what will. That is the last resort and the only place the feed ever
+    loses the end of a sentence: `transcript_line_limit` is off by default, so
+    somebody talking for five unbroken minutes is the one case left, and taking
+    the tail off their line is better than handing an oversized body to `Ticker`
+    to cut at a character — which would take the fence off the front of it.
+    """
+    shown = list(lines)
+
+    while len(shown) > 1 and len(_fenced(shown)) > limit:
+        shown.pop(0)
+
+    if len(_fenced(shown)) > limit:
+        shown = [_cut(shown[0], limit - FENCE_OVERHEAD)]
+
+    return shown
 
 
 def _fenced(lines: Iterable[str]) -> str:

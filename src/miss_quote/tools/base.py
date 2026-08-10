@@ -73,6 +73,13 @@ from miss_quote.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Discord's ceiling on one message's content. Not a setting: it is the API's
+# number. It lives here rather than in either of the two `bot` modules that
+# enforce it because it is part of what `Ticker` promises a caller, and a caller
+# that has to trim to it cannot import from `bot` without turning the dependency
+# between the layers into a circle.
+MESSAGE_LIMIT = 2000
+
 
 @runtime_checkable
 class Speaker(Protocol):
@@ -148,7 +155,13 @@ class Announcer(Protocol):
     """Somewhere a tool can keep an account of something worth reading later."""
 
     async def revise(
-        self, server: str, channel: str, title: str, text: str, since: datetime
+        self,
+        server: str,
+        channel: str,
+        title: str,
+        text: str,
+        since: datetime,
+        keep_pinned: int,
     ) -> bool:
         """
         Put an account in one named channel, replacing the account it had.
@@ -169,6 +182,12 @@ class Announcer(Protocol):
         not post itself — the moment the thing being written about began, since
         nothing older can be an account of it.
 
+        `keep_pinned` is how many accounts an implementation should leave pinned
+        in the channel, newest first. Pinning is what makes one reachable without
+        scrolling and a channel holds a bounded number of pins, so something has
+        to age out; what ages out is the pin rather than the account. Zero pins
+        nothing.
+
         The channel is named rather than identified, because the tool that asks
         holds a server alias and a channel name and nothing that could resolve
         an ID. Whoever implements this decides what a name means, and owns which
@@ -184,16 +203,27 @@ class Announcer(Protocol):
 class Ticker(Protocol):
     """Somewhere a tool can keep one message that goes on changing."""
 
+    # How much one message holds. Published because trimming to it is the
+    # caller's job and cannot be delegated: what has to come off is a whole
+    # line of whatever the caller is showing, and only the caller knows where
+    # its lines are or which of them it cannot afford to lose. An implementation
+    # still enforces the ceiling underneath, for a caller that gets it wrong.
+    limit: int
+
     async def show(self, server: str, channel: str, text: str) -> bool:
         """
         Put text in a channel and keep rewriting the same message with it.
 
-        The third of the three, and the one the other two cannot be: `Topic` is
-        one line that replaces the last one and holds no history, `Announcer`
-        adds a message that joins the ones before it, and this holds one message
-        and edits it in place. What it is for is text worth reading while it is
-        current and not worth a channel full of messages afterwards — a running
-        transcript being the one that exists.
+        The third of the three, and no longer told apart from `Announcer` by
+        whether it edits: both hold a message and rewrite it. What separates
+        them is **when the text is worth reading**. An account is worth reading
+        afterwards, so it is left up and joins what a channel scrolls back
+        through. This is worth reading only while it is current, so it is
+        pinned while it lives and deleted when it stops — a running transcript
+        being the one thing that wants that.
+
+        `Topic` is the one neither of them can be: a single line under a voice
+        channel's name, holding no history at all.
 
         Whoever implements this owns the message: which one it is, when a new
         one has to be posted because the old one is gone, and what happens to it
@@ -227,7 +257,13 @@ class SilentTicker:
 
     The runner's default, so a tool that has something to show always has one
     and never has to check. False, because nothing was shown.
+
+    It reports the same ceiling as the real one rather than something unbounded,
+    so a tool trims identically whether or not anybody is watching — a bug that
+    only appears once a channel is configured is a bug nobody finds.
     """
+
+    limit = MESSAGE_LIMIT
 
     async def show(self, server: str, channel: str, text: str) -> bool:
         logger.debug("Nowhere to show %d characters for %s.", len(text), server)
@@ -264,7 +300,13 @@ class SilentAnnouncer:
     """
 
     async def revise(
-        self, server: str, channel: str, title: str, text: str, since: datetime
+        self,
+        server: str,
+        channel: str,
+        title: str,
+        text: str,
+        since: datetime,
+        keep_pinned: int,
     ) -> bool:
         logger.debug("Nowhere to post %d characters for %s.", len(text), server)
 

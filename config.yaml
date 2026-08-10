@@ -583,6 +583,29 @@ servers:
               # schedule:
               #   - Wed 17:00-00:00
 
+              # How much of one utterance goes in the feed, in characters.
+              # Off by default: a long line pushes the lines above it off the
+              # message rather than losing its own tail, which is what somebody
+              # watching to see what the transcriber heard wants — a sentence
+              # cut at a number tells them nothing about the words after it. Set
+              # a number to keep the short lines above instead. A line too long
+              # for one message is cut whatever this says, since the alternative
+              # is a message Discord refuses.
+              #
+              # transcript_line_limit: -1
+
+              # How many evenings stay pinned in `channel`. The first message
+              # of an account is pinned, which is what makes an evening
+              # reachable without scrolling a channel that keeps one per
+              # sitting. Discord holds fifty pins, so something has to age out:
+              # past this many, the oldest account is **unpinned and left where
+              # it is**. Nothing is deleted — the account is still there to
+              # scroll to, and the transcript it came from is on disk under its
+              # own retention. `0` pins nothing, and does not unpin what is
+              # already pinned.
+              #
+              # pinned_sessions: 5
+
               # Which prompt summarizes a sealed session. `recap` is an account
               # of the evening for the people who were there; `minutes` is
               # topics, decisions, and open questions.
