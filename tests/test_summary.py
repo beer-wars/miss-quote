@@ -172,6 +172,7 @@ class FakeAnnouncer:
     def __init__(self, channels: tuple[str, ...] = (POSTING_CHANNEL,)) -> None:
         self.accounts: dict[tuple[str, str], str] = {}
         self.revisions: list[tuple[str, str, str]] = []
+        self.kept_pinned: list[int] = []
         self._channels = channels
 
     @property
@@ -183,10 +184,11 @@ class FakeAnnouncer:
         return channel if channel in self._channels else None
 
     async def revise(
-        self, server: str, channel: str, title: str, text: str, since
+        self, server: str, channel: str, title: str, text: str, since, keep_pinned: int
     ) -> bool:
         self.accounts[(channel, title)] = f"{title}\n\n{text}"
         self.revisions.append((channel, title, text))
+        self.kept_pinned.append(keep_pinned)
 
         return True
 

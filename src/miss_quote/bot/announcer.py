@@ -104,6 +104,10 @@ BOUNDARIES = (PARAGRAPH_BREAK, LINE_BREAK, WORD_BREAK)
 PIN_PERMISSION = "Pin Messages"
 PINS_FULL = 30003
 
+# The smallest pin budget that pins anything, so that nothing is the way a
+# channel says it would rather scroll.
+AT_LEAST_ONE_PIN = 1
+
 # What a refused post has to ask for, as the permissions are named in the client.
 #
 # Two of them, and the second is the one to read twice: an embed is not message
@@ -168,7 +172,13 @@ class DiscordAnnouncer:
         return discord.utils.get(getattr(guild, "text_channels", ()), name=channel)
 
     async def revise(
-        self, server: str, channel: str, title: str, text: str, since: datetime
+        self,
+        server: str,
+        channel: str,
+        title: str,
+        text: str,
+        since: datetime,
+        keep_pinned: int,
     ) -> bool:
         """
         Put an evening's account in one channel, replacing the account it had.
@@ -180,6 +190,11 @@ class DiscordAnnouncer:
         `since` bounds the search for an account this process did not post
         itself. Nothing older than the evening can be this evening's account, so
         the moment the sitting opened is as far back as the channel is read.
+
+        `keep_pinned` is how many evenings stay in the pin list. A channel holds
+        fifty of them and this files one per sitting, so something has to age
+        out; what ages out is the pin and not the account, which stays where it
+        was posted. Zero pins nothing.
 
         Every piece has to land for this to be True. Half an account in a
         channel is worse than none, in that it reads as a whole one, so a failure
@@ -218,7 +233,9 @@ class DiscordAnnouncer:
                 self._accounts[key] = held
 
         if held is None:
-            return await self._posted(server, channel, target, key, pages)
+            return await self._posted(
+                server, channel, target, key, pages, keep_pinned
+            )
 
         # An account that still fits the messages it is in is rewritten where it
         # stands, however many that is: three edits to three messages leave the
@@ -227,9 +244,13 @@ class DiscordAnnouncer:
         # channel, an unknown distance below the part it continues — so the run
         # is replaced whole. See `_replaced`.
         if len(pages) <= len(held.run):
-            return await self._rewritten(server, channel, target, key, held, pages)
+            return await self._rewritten(
+                server, channel, target, key, held, pages, keep_pinned
+            )
 
-        return await self._replaced(server, channel, target, key, held, pages)
+        return await self._replaced(
+            server, channel, target, key, held, pages, keep_pinned
+        )
 
     async def _posted(
         self,
@@ -238,6 +259,7 @@ class DiscordAnnouncer:
         target: Any,
         key: tuple[str, str, str],
         pages: list[list[discord.Embed]],
+        keep_pinned: int,
     ) -> bool:
         """Put an account the channel does not have yet up, and hold on to it."""
         run = await self._run(server, channel, target, pages)
@@ -247,7 +269,7 @@ class DiscordAnnouncer:
         self._accounts[key] = Account(run=run)
         logger.info("Posted an account for %s to '#%s'.", server, channel)
 
-        await self._pinned(server, channel, run[0])
+        await self._pinned(server, channel, target, run[0], keep_pinned)
 
         return True
 
@@ -259,6 +281,7 @@ class DiscordAnnouncer:
         key: tuple[str, str, str],
         held: Account,
         pages: list[list[discord.Embed]],
+        keep_pinned: int,
     ) -> bool:
         """
         Rewrite the messages the account is already in, leaving them where they are.
@@ -277,7 +300,9 @@ class DiscordAnnouncer:
         has not asked for the evening to go unrecorded.
         """
         for message, page in zip(held.run, pages):
-            if not await self._edited(server, channel, target, key, message, page):
+            if not await self._edited(
+                server, channel, target, key, message, page, keep_pinned
+            ):
                 return False
 
         surplus = held.run[len(pages) :]
@@ -297,6 +322,7 @@ class DiscordAnnouncer:
         key: tuple[str, str, str],
         message: Any,
         page: list[discord.Embed],
+        keep_pinned: int,
     ) -> bool:
         """One message of a run, rewritten, or the whole account posted again."""
         try:
@@ -309,7 +335,9 @@ class DiscordAnnouncer:
             )
             self._accounts.pop(key, None)
 
-            return await self._posted(server, channel, target, key, [page])
+            return await self._posted(
+                server, channel, target, key, [page], keep_pinned
+            )
         except discord.Forbidden:
             logger.warning(
                 "Not allowed to edit in '%s'; %s will not get its accounts there. "
@@ -343,6 +371,7 @@ class DiscordAnnouncer:
         key: tuple[str, str, str],
         held: Account,
         pages: list[list[discord.Embed]],
+        keep_pinned: int,
     ) -> bool:
         """
         Post the account again as one run, take the old one down, and pin the head.
@@ -377,11 +406,18 @@ class DiscordAnnouncer:
             len(run),
         )
 
-        await self._pinned(server, channel, run[0])
+        await self._pinned(server, channel, target, run[0], keep_pinned)
 
         return True
 
-    async def _pinned(self, server: str, channel: str, message: Any) -> None:
+    async def _pinned(
+        self,
+        server: str,
+        channel: str,
+        target: Any,
+        message: Any,
+        keep_pinned: int,
+    ) -> None:
         """
         Pin the head of a run, so an account is reachable without scrolling.
 
@@ -393,7 +429,16 @@ class DiscordAnnouncer:
 
         Deleting a message unpins it, so a replaced run takes its own pin off the
         list on the way out and nothing has to be unpinned by hand.
+
+        Older evenings age out of the pin list afterwards rather than before, so
+        a pin that will not land costs nothing already up. `keep_pinned` of
+        nothing pins nothing and ages nothing out — a channel that does not want
+        its accounts pinned is not asking for the ones already there to be
+        unpinned on the next seal.
         """
+        if keep_pinned < AT_LEAST_ONE_PIN:
+            return
+
         try:
             await message.pin()
         except discord.Forbidden:
@@ -419,6 +464,70 @@ class DiscordAnnouncer:
         except (OSError, asyncio.TimeoutError) as exc:
             logger.warning(
                 "Could not reach Discord to pin the account in '%s': %s", channel, exc
+            )
+
+        await self._aged(server, channel, target, keep_pinned)
+
+    async def _aged(
+        self, server: str, channel: str, target: Any, keep_pinned: int
+    ) -> None:
+        """
+        Unpin the accounts that have fallen out of the newest `keep_pinned`.
+
+        **Unpinned and not deleted.** What ages out is how quickly an evening can
+        be reached, not the evening: the account stays where it was posted, still
+        scrollable and still searchable, and the transcript it was written from
+        is on disk under its own retention. A pin list is an index, and dropping
+        something off the end of an index is not the same as burning the page.
+
+        Accounts only, on the same structural test `bot.ticker` sweeps by from
+        the other side: the bot's own pinned messages carrying an embed. A feed
+        this process left pinned is the ticker's to take down and would be
+        miscounted as an evening here.
+
+        Newest first by message ID, which is a snowflake and therefore ordered by
+        when it was posted. The pin list's own order is not documented to be
+        anything in particular, and an account that was replaced tonight is newer
+        than one from last week either way.
+
+        Never fatal. A pin list that cannot be read or written is an index that
+        goes on holding one evening too many, which nothing else depends on.
+        """
+        me = getattr(getattr(target, "guild", None), "me", None)
+        if me is None:
+            return
+
+        try:
+            pinned = await target.pins()
+        except (discord.HTTPException, OSError, asyncio.TimeoutError) as exc:
+            logger.warning(
+                "Could not read what %s has pinned in '%s': %s", server, channel, exc
+            )
+            return
+
+        accounts = sorted(
+            (message for message in pinned if _is_account(message, me)),
+            key=lambda message: message.id,
+            reverse=True,
+        )
+
+        for message in accounts[keep_pinned:]:
+            try:
+                await message.unpin()
+            except (discord.HTTPException, OSError, asyncio.TimeoutError) as exc:
+                logger.warning(
+                    "Could not unpin an older account of %s's in '%s': %s",
+                    server,
+                    channel,
+                    exc,
+                )
+                continue
+
+            logger.info(
+                "Unpinned an older account of %s's in '#%s'; it is still there to "
+                "scroll to.",
+                server,
+                channel,
             )
 
     async def _adopted(
@@ -606,6 +715,18 @@ def _embeds(body: str, title: str | None) -> list[discord.Embed]:
         )
         for index, piece in enumerate(split(body, EMBED_DESCRIPTION_LIMIT))
     ]
+
+
+def _is_account(message: Any, me: Any) -> bool:
+    """
+    Whether a message in this channel is one of these rather than a feed.
+
+    The same line `bot.ticker` reads from the other side: this bot posts two
+    kinds of message into a summary channel, and an account carries embeds where
+    a feed carries content. Structural, so neither has to remember anything about
+    the other across a restart.
+    """
+    return message.author.id == me.id and bool(message.embeds)
 
 
 def _titled(message: Any, me: Any, title: str) -> bool:

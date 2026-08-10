@@ -362,6 +362,7 @@ Keys are matched through the same slug that names the transcript directory, so `
 | Setting | Default | Purpose |
 |---|---|---|
 | `channel` | — | Text channel to post in, by name. Unset writes to disk and posts nothing |
+| `pinned_sessions` | `5` | How many evenings stay pinned in `channel`. Older accounts are unpinned, never deleted. `0` pins nothing |
 | `prompt` | `recap` | Which prompt summarizes a sealed session |
 | `retelling_prompt` | `bard` | Which prompt turns a stored summary into something to say out loud |
 | `retelling_words` | `200` | Roughly how long the spoken retelling should be — a target the prompt is told to aim at, not a cap it is cut to. About a minute out loud |

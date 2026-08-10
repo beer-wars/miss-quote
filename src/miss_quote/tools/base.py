@@ -148,7 +148,13 @@ class Announcer(Protocol):
     """Somewhere a tool can keep an account of something worth reading later."""
 
     async def revise(
-        self, server: str, channel: str, title: str, text: str, since: datetime
+        self,
+        server: str,
+        channel: str,
+        title: str,
+        text: str,
+        since: datetime,
+        keep_pinned: int,
     ) -> bool:
         """
         Put an account in one named channel, replacing the account it had.
@@ -168,6 +174,12 @@ class Announcer(Protocol):
         `since` is how far back an implementation may look for an account it did
         not post itself — the moment the thing being written about began, since
         nothing older can be an account of it.
+
+        `keep_pinned` is how many accounts an implementation should leave pinned
+        in the channel, newest first. Pinning is what makes one reachable without
+        scrolling and a channel holds a bounded number of pins, so something has
+        to age out; what ages out is the pin rather than the account. Zero pins
+        nothing.
 
         The channel is named rather than identified, because the tool that asks
         holds a server alias and a channel name and nothing that could resolve
@@ -264,7 +276,13 @@ class SilentAnnouncer:
     """
 
     async def revise(
-        self, server: str, channel: str, title: str, text: str, since: datetime
+        self,
+        server: str,
+        channel: str,
+        title: str,
+        text: str,
+        since: datetime,
+        keep_pinned: int,
     ) -> bool:
         logger.debug("Nowhere to post %d characters for %s.", len(text), server)
 
