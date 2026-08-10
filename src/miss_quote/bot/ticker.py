@@ -12,10 +12,10 @@ so this pins it while it lives and deletes it when the room empties.
 That difference is why the two draw opposite conclusions from the same limits.
 An account is long and rewritten a handful of times a night, so it goes in embeds
 and buys the room to stay one message at almost any length an evening runs to.
-This is short by construction — at most `transcript_lines` of them, each cut to
-`TRANSCRIPT_LINE_LIMIT` — and rewritten every couple of seconds, so it stays
-message content: at that cadence what an embed would buy in ceiling it would
-spend in repainting a container nobody asked to have redrawn.
+This is short by construction — at most `transcript_lines` of them, and trimmed
+to fit a message by dropping the oldest — and rewritten every couple of seconds,
+so it stays message content: at that cadence what an embed would buy in ceiling
+it would spend in repainting a container nobody asked to have redrawn.
 
 **The message is pinned while it is live**, which is what makes it reachable
 while a room is talking rather than something to scroll for. Deleting it unpins

@@ -17,11 +17,12 @@ from miss_quote.config import SummaryConfig, TranscriptConfig, transcript_cfg
 from miss_quote.llm.client import CompletionError
 from miss_quote.tools.base import MESSAGE_LIMIT, Tool, ToolContext, Toolbox
 from miss_quote.tools.summary import (
+    FEED_MARGIN,
+    FENCE_OVERHEAD,
     DEFAULT_ADDRESS_WINDOW_SECONDS,
     ELLIPSIS,
     MINIMUM_TRANSCRIPT_REFRESH_SECONDS,
     TRANSCRIPT_FENCE,
-    TRANSCRIPT_LINE_LIMIT,
     Summary,
 )
 from miss_quote.tools.tts import Tts
@@ -1570,8 +1571,11 @@ def _watching(**channel) -> dict:
 
 
 # Small enough that a test can write a feed over it in a few readable lines,
-# rather than generating two thousand characters to prove an off-by-one.
-NARROW_LIMIT = 120
+# rather than generating two thousand characters to prove an off-by-one. What a
+# test asserts against is the budget; what the ticker is given is the budget plus
+# the margin the feed leaves unspent.
+NARROW_BUDGET = 120
+NARROW_LIMIT = NARROW_BUDGET + FEED_MARGIN
 
 
 def _block(ticker: FakeTicker) -> str:
@@ -1604,7 +1608,7 @@ async def test_a_feed_over_the_limit_drops_its_oldest_lines(summaries):
     await _refreshed(tool)
     shown = _block(ticker)
 
-    assert len(shown) <= NARROW_LIMIT
+    assert len(shown) <= NARROW_BUDGET
     assert len(_lines(shown)) < 6
 
     # The newest survives and the oldest is what went.
@@ -1753,17 +1757,83 @@ async def test_an_unwatched_room_is_not_shown(summaries):
     assert ticker.shown == []
 
 
-async def test_one_long_line_cannot_clear_the_rest_off(summaries):
+async def test_one_long_line_is_shown_whole_and_costs_the_lines_above_it(summaries):
+    """
+    No cap by default, so a sentence is not cut at a number.
+
+    Somebody watching to see what the transcriber heard learns nothing from a
+    line that stops mid-sentence; what they can afford to lose is the lines
+    above it, which the feed drops anyway as the room goes on talking.
+    """
     ticker = FakeTicker()
     tool, _ = _tool(config=_watching(), ticker=ticker)
 
+    for number in range(3):
+        await tool.handle_utterance(_said(f"Short {number}."), Session(WATCHED_SOURCE))
+
+    # Sized off the budget rather than written in, so that changing the margin
+    # cannot leave this passing for the wrong reason: long enough that the short
+    # lines above no longer fit beside it, short enough to survive whole itself.
+    budget = ticker.limit - FEED_MARGIN
+    spare = budget - FENCE_OVERHEAD - len(f"{ASKER}: ")
+    words = spare // len("word ")
+
+    await tool.handle_utterance(_said("word " * words), Session(WATCHED_SOURCE))
+    await _refreshed(tool)
+
+    shown = _lines(_block(ticker))
+
+    assert shown[-1].count("word") == words
+    assert not shown[-1].endswith(ELLIPSIS)
+    assert "Short 0." not in _block(ticker)
+
+
+async def test_a_channel_that_asks_for_a_cap_gets_one(summaries):
+    """And the lines above survive, which is what a cap is for."""
+    ticker = FakeTicker()
+    tool, _ = _tool(config=_watching(transcript_line_limit=40), ticker=ticker)
+
+    await tool.handle_utterance(_said("Short one."), Session(WATCHED_SOURCE))
     await tool.handle_utterance(_said("word " * 200), Session(WATCHED_SOURCE))
     await _refreshed(tool)
 
-    said = _lines(_block(ticker))[0]
+    shown = _lines(_block(ticker))
 
-    assert said.endswith(ELLIPSIS)
-    assert len(said) <= TRANSCRIPT_LINE_LIMIT + len(f"{ASKER}: ")
+    assert len(shown) == 2
+    assert "Short one." in shown[0]
+    assert shown[1].endswith(ELLIPSIS)
+    assert len(shown[1]) <= 40 + len(f"{ASKER}: ")
+
+
+async def test_a_line_too_long_for_the_message_is_cut_rather_than_the_fence(summaries):
+    """The last resort, and the only place the feed loses the end of a sentence."""
+    ticker = FakeTicker()
+    tool, _ = _tool(config=_watching(), ticker=ticker)
+
+    await tool.handle_utterance(_said("word " * 2000), Session(WATCHED_SOURCE))
+    await _refreshed(tool)
+
+    shown = _block(ticker)
+
+    assert len(shown) <= ticker.limit - FEED_MARGIN
+    assert shown.startswith(TRANSCRIPT_FENCE)
+    assert shown.endswith(TRANSCRIPT_FENCE)
+    assert shown.count(TRANSCRIPT_FENCE) == 2
+    assert _lines(shown)[0].endswith(ELLIPSIS)
+
+
+async def test_the_feed_leaves_the_margin_unspent(summaries):
+    ticker = FakeTicker()
+    tool, _ = _tool(config=_watching(), ticker=ticker)
+
+    for number in range(40):
+        await tool.handle_utterance(
+            _said(f"Line {number} " + "word " * 30), Session(WATCHED_SOURCE)
+        )
+
+    await _refreshed(tool)
+
+    assert len(_block(ticker)) <= ticker.limit - FEED_MARGIN
 
 
 async def test_a_backtick_cannot_break_the_fence(summaries):
