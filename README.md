@@ -17,10 +17,6 @@
 ![Wyoming](https://img.shields.io/badge/Wyoming-ASR-success?style=for-the-badge)
 ![Silero VAD](https://img.shields.io/badge/Silero%20VAD-ONNX-orange?style=for-the-badge)
 
-## Made with vibes, not love
-
-This whole bot was vibecoded, and it doesn't deserve more attention than that. What it provides isn't worth proper effort; it was written as a joke out of pure laziness. It somehow does its job anyway. Anyone is welcome to use it. It comes with as much guarantee as the effort which went into it: none.
-
 **miss-quote** is a Discord bot that sits in on your D&D session and listens to the adventures, so the evening ends up with a record instead of in everyone's half-memory of it. When the bot leaves it summarizes what happened, and next time you can ask: "what happened last session" and a bard recounts the night. It gets up to other shenanigans too.
 
 Walk into a film line and it says the line out loud, then asks the room where it came from and pays whoever gets it first. Swear and it fines you, out loud, *Demolition Man* style. It keeps a running tally of who owes what and publishes the standings under the voice channel's name.
@@ -28,6 +24,10 @@ Walk into a film line and it says the line out loud, then asks the room where it
 Transcription is delegated to a [Wyoming](https://github.com/rhasspy/wyoming) ASR server rather than run in-process, so **this container** is a CPU-only workload with no model weights and no cache volume for them. That moves the GPU rather than removing it: the bot does nothing at all without a reachable ASR server, and in practice that server wants one. What it buys is a bot that schedules anywhere and a GPU that several things can share.
 
 It is a hard fork of [Leehyunbin0131/Discord-Realtime-STT-Bot](https://github.com/Leehyunbin0131/Discord-Realtime-STT-Bot), which ran `faster-whisper` on a local GPU.
+
+## Made with vibes, not love
+
+This whole bot was vibecoded, and it doesn't deserve more attention than that. What it provides isn't worth proper effort; it was written as a joke out of pure laziness. It somehow does its job anyway. Anyone is welcome to use it. It comes with as much guarantee as the effort which went into it: none.
 
 ---
 
