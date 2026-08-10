@@ -638,6 +638,8 @@ a.card:hover { color: inherit; }
 }
 .toc a:hover { color: var(--text-strong); border-left-color: var(--accent-2); }
 .toc a.lvl-3 { padding-left: 26px; font-size: 0.82rem; }
+.toc a.lvl-4 { padding-left: 40px; font-size: 0.78rem; color: var(--faint); }
+.toc a.lvl-4:hover, .toc a.lvl-4.active { color: var(--accent); }
 .toc a.active {
   color: var(--accent);
   border-left-color: var(--accent);
@@ -809,6 +811,48 @@ figure.highlight {
 .prose .note > :last-child,
 .prose .warn > :last-child,
 .prose .tip  > :last-child { margin-bottom: 0; }
+
+/* Reasoning, collapsed. The reference above stays scannable and the "why" is a
+   click away rather than deleted. Written as <details class="why" markdown="1">;
+   the attribute is what makes kramdown parse the Markdown inside it. */
+.prose details.why {
+  margin: -2px 0 22px;
+  border-left: 2px solid var(--line-soft);
+}
+.prose details.why > summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 0 7px 14px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.prose details.why > summary::-webkit-details-marker { display: none; }
+.prose details.why > summary::before {
+  content: "";
+  flex: none;
+  width: 0;
+  height: 0;
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 120ms ease;
+}
+.prose details.why[open] > summary::before { transform: rotate(90deg); }
+.prose details.why > summary:hover { color: var(--accent); }
+.prose details.why[open] > summary { color: var(--muted); }
+.prose details.why > :not(summary) {
+  margin-left: 14px;
+  margin-right: 0;
+  color: var(--muted);
+}
+.prose details.why > :last-child { margin-bottom: 16px; }
 
 /* Previous/next pager at the bottom of a doc page. The columns are fixed rather
    than auto-fit so a page with only one neighbour leaves the other side empty

@@ -38,7 +38,7 @@
   var tocLinks = [];
 
   if (toc) {
-    var tocTargets = prose.querySelectorAll('h2[id], h3[id]');
+    var tocTargets = prose.querySelectorAll('h2[id], h3[id], h4[id]');
 
     Array.prototype.forEach.call(tocTargets, function (h) {
       var link = document.createElement('a');
@@ -110,6 +110,36 @@
     window.addEventListener('resize', onScroll, { passive: true });
     mark();
   }
+
+  /* --- A link into a collapsed drawer opens it ----------------------- */
+
+  // Rationale lives in <details> that start shut, and a cross-page anchor can
+  // point at something inside one. Landing on a closed drawer looks like a
+  // broken link, so open every drawer above the target and put it back under
+  // the sticky header, which the browser measured before any of this ran.
+  var revealTarget = function () {
+    var raw = window.location.hash.slice(1);
+    if (!raw) { return; }
+
+    var id = raw;
+    try { id = decodeURIComponent(raw); } catch (e) {}
+
+    var target = document.getElementById(id);
+    if (!target) { return; }
+
+    var drawer = target.closest('details');
+    while (drawer) {
+      drawer.open = true;
+      drawer = drawer.parentNode && drawer.parentNode.closest('details');
+    }
+
+    var bar = document.querySelector('.site-header');
+    target.scrollIntoView();
+    window.scrollBy(0, -((bar ? bar.offsetHeight : 60) + 16));
+  };
+
+  window.addEventListener('hashchange', revealTarget);
+  revealTarget();
 
   /* --- Wide tables scroll inside their own box ----------------------- */
 

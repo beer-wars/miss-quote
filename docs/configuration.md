@@ -6,6 +6,9 @@ lede: Everything about how the bot behaves, and which servers it behaves that wa
 description: The complete miss-quote configuration reference — config.yaml, the server block, every tool and its settings, the deployment-wide settings block, and every environment variable.
 ---
 
+Reference first, reasoning second. Where a **Why** drawer sits under a setting, that is the argument for the way it currently behaves — collapsed rather than cut, because it is worth reading once and in the way every time afterwards. Nothing you would search this page for is inside one: names, defaults, and boundary values stay in the tables.
+{: .note }
+
 ## The file
 
 `config.yaml` is mounted at `/config/config.yaml` from a ConfigMap. Point `CONFIG_FILE` elsewhere to override the location. The file is read once at startup, so editing it means restarting the pod. The IDs in the repo copy are placeholders.
@@ -25,6 +28,12 @@ servers:
     tools:
       scoreboard:
         enabled: true
+      summary:
+        enabled: true
+        config:
+          monitored_channels:
+            general-voice:
+              channel: session-summaries
       tts:
         enabled: true
       verbal-morality:
@@ -38,15 +47,24 @@ servers:
       234567890123456789: Someone Else
 ```
 
-The split against the environment is what a deployment **points at** versus how it **behaves**. Hosts, ports, directories, and the token stay variables: they are what a manifest already carries and what a secret has to stay in. Everything that is a number or a wording — how long a trigger stays spent, what a balance is called, how quiet a repeat offender gets — is `settings:`, because twenty of those spread across a pod spec is a worse thing to read than one file with comments in it.
+**`summary` is what puts a room on the record.** A server that does not enable it, or a voice channel absent from its `monitored_channels`, is still joined and still heard — and nothing said there reaches disk. That is one switch rather than four, and it is the line to check first when a bot that is plainly working leaves an empty transcript directory behind.
 
-`settings:` is optional in its entirety, and so is every line in it: each setting has a default, and a file that mentions none of them is a working file. What it is **not** is a free-form block. A name nothing reads — a typo, or a setting written under the wrong section — is reported at startup rather than ignored, on the same reasoning as a stray key in a tool block: the alternative is a deployment running on a default against a file that plainly asks for something else. A value that will not parse falls back to its default and is reported too, rather than stopping the pod, because this is also the file that decides which servers get joined.
+Hosts, ports, directories, and the token are environment variables; everything that is a number or a wording is `settings:`. **`settings:` is optional in its entirety**, and so is every line in it — a file that mentions none of them is a working file. It is not, however, free-form: a name nothing reads is reported at startup, and a value that will not parse falls back to its default and is reported too.
+
+<details class="why" markdown="1">
+<summary>Why a typo is reported rather than ignored, and why it does not stop the pod</summary>
+
+A deployment running on a default against a file that plainly asks for something else is the failure with no symptom, so a name nothing reads is named on the way up.
+
+Reporting it is as far as it goes, because this is also the file that decides which servers get joined. Refusing to start over a stray key would take the whole deployment down to protect one setting.
+
+</details>
 
 ### Parsing reports rather than raises
 
-A server whose block is malformed — no `alias`, or not a mapping at all — is dropped and logged at startup; the bot joins one fewer server instead of crash-looping over a typo. The same goes for a name filed under something that is not a user ID, and a tool whose settings will not parse.
+A malformed server block — no `alias`, or not a mapping at all — is dropped and logged; so is a name filed under something that is not a user ID, and a tool whose settings will not parse. The bot joins one fewer server instead of crash-looping over a typo.
 
-On startup the bot reconciles the file against the servers it is actually in, and says so. Four things can be wrong and none of them raise: an entry would not parse, nothing is configured, a server is configured but the bot was never invited, or the bot is in a server nobody configured. Each is logged, so none has to be discovered by noticing an empty transcript directory.
+On startup it also reconciles the file against the servers it is actually in. Four things can be wrong and none of them raise: an entry would not parse, nothing is configured, a server is configured but the bot was never invited, or the bot is in a server nobody configured. Each is logged — see [reading the startup log]({{ '/installation/#reading-the-startup-log' | relative_url }}).
 
 ## Servers
 
@@ -58,7 +76,14 @@ Everything about a server lives under its ID, and the ID appears there and nowhe
 | `users` | no | Replaces the display name Discord reports for a speaker |
 | `tools` | no | Elects the server into the tools listed under it |
 
-**`servers` is a hard gate on joining.** A server that is not listed is never joined, by autojoin or by an explicit `!join`, and an empty mapping or a missing file means the bot joins nothing at all. That direction is deliberate: joining no server is something you notice and fix, while recording a server the bot should not have been in is not something you can take back.
+**`servers` is a hard gate on joining.** A server that is not listed is never joined, by autojoin or by an explicit `!join`, and an empty mapping or a missing file means the bot joins nothing at all.
+
+<details class="why" markdown="1">
+<summary>Why the gate fails closed</summary>
+
+Joining no server is something you notice and fix. Recording a server the bot should not have been in is not something you can take back.
+
+</details>
 
 ### users
 
@@ -68,15 +93,20 @@ users:
   "345678901234567890": Speaker Two
 ```
 
-`users` replaces the display name Discord reports for a speaker. Discord nicknames are freely editable and often not a name at all, which makes them poor labels in a transcript that a summarizer will later read. The roster is per server because the same person can be known differently in two places. IDs may be quoted or bare; both are read as integers.
+`users` replaces the display name Discord reports for a speaker. IDs may be quoted or bare; both are read as integers. The roster is per server, and it is also **what can be warmed** and **who is eligible for the scoreboard** — a phrase naming somebody on it is rendered before anybody speaks, and somebody not on it waits for the synthesizer the first time they are named.
 
-The roster is also **what can be warmed** and **who is eligible for the scoreboard**. A phrase naming somebody on it is rendered before anybody speaks; somebody not on it waits for the synthesizer the first time they are named, and nobody waits again.
+<details class="why" markdown="1">
+<summary>Why not just use the Discord name</summary>
+
+Discord nicknames are freely editable and often not a name at all, which makes them poor labels in a transcript a summarizer will later read. Per server, because the same person can be known differently in two places.
+
+</details>
 
 ### tools {#server-tools}
 
-`tools` elects the server into the tools listed under it. Each is opted into on its own, **including the ones others depend on**: `verbal-morality` hands its fines to `scoreboard` and its words to `tts`, and a server that enables the first and neither of the others is fining people silently and keeping no record of it. Each absence is reported at startup rather than left to be noticed.
+`tools` elects the server into the tools listed under it. Each is opted into on its own, **including the ones others depend on** — `verbal-morality` hands its fines to `scoreboard` and its words to `tts`, and enabling it alone fines people silently and keeps no record of it. Each absence is reported at startup.
 
-**A tool block holds `enabled` and `config`, and nothing else.** Every setting a tool takes goes under `config:`; written a level up, beside `enabled`, it is read by nothing. That is the one misconfiguration with no symptom — the tool starts, the log says it is enabled, and it runs on its defaults against a file that plainly asks for something else — so anything else in a tool block is named at startup alongside the other parsing problems:
+**A tool block holds `enabled` and `config`, and nothing else.** Every setting a tool takes goes under `config:`; written a level up, beside `enabled`, it is read by nothing and named at startup:
 
 ```yaml
       quotes:
@@ -125,7 +155,7 @@ quotes:
 
 #### The quote file
 
-Most of the list is per deployment. The lines come from a YAML file at `QUOTES_FILE` — a film, and under it the phrases that set its lines off — so adding a quote is a key rather than a deployment. The image ships the list in `resources/quotes.yaml`; mount your own over that path to say something it does not.
+The lines come from a YAML file at `QUOTES_FILE` — a film, and under it the phrases that set its lines off. The image ships the list in `resources/quotes.yaml`; mount your own over that path to replace it.
 
 ```yaml
 Firefly:
@@ -145,9 +175,9 @@ The Princess Bride:
 | The inner key | The phrase that sets the line off. Matched whole and case-insensitively, however the file writes it |
 | The value | What gets said. `{user}` is the only placeholder, and names whoever set it off |
 
-**A trigger appears once in the whole file.** Nesting under the title makes it a key, so writing it twice under one title is not something the format can express — and writing it under two titles is refused for the same reason, rather than being allowed to mean something a repeat under one title could not. The first is kept and the rest are reported, so the line you have to go and delete is the later one.
+**A trigger appears once in the whole file**, including across titles. The first is kept and the rest reported, so the line to go and delete is the later one.
 
-**Two triggers may share an answer**, which is how the file says that two phrases deserve the same reply — `awesome` and `cool` both earn `Shiny.`. There is no alternation syntax inside a trigger: a trigger is matched as written, so a key meaning to catch two phrases has to be two keys.
+**Two triggers may share an answer** — `awesome` and `cool` both earning `Shiny.`. There is no alternation syntax inside a trigger, so a key meaning to catch two phrases has to be two keys.
 
 **A phrase worth answering several ways lists its lines, and one of them is drawn each time it fires:**
 
@@ -158,16 +188,16 @@ Firefly:
     - Gorram it.
 ```
 
-The draw happens when the trigger fires rather than at startup, so a restart is not what decides which line a channel hears for the next week. The backoff is unchanged and still keyed on the trigger, so a trigger with four answers still fires once per window, not four times.
+The draw happens when the trigger fires rather than at startup, so a restart does not decide which line a channel hears for the next week. The backoff is still keyed on the trigger, so a trigger with four answers fires once per window, not four times.
 
 Two things are worth knowing about the format itself, because both look entirely correct in the file:
 
 - **A line starting with `{user}` has to be quoted.** Unquoted, a `{` opens a mapping and the file will not parse.
 - **A trigger like `no` or a title like `1917` has to be quoted too.** Unquoted, YAML reads them as a boolean and an integer, and neither is text the matcher can ever compare against.
 
-The file is read at startup and **reports rather than raises**. An entry with no trigger or no line, a line carrying a placeholder nothing fills, a trigger already answering elsewhere, and anything YAML did not read as text are each logged with their line number and dropped. What *does* stop the tool from starting is a file that is missing, unreadable, not valid YAML, not a mapping of titles, or holding no usable entry at all.
+The file is read at startup and **reports rather than raises**: a bad entry is logged with its line number and dropped. What *does* stop the tool starting is a file that is missing, unreadable, not valid YAML, not a mapping of titles, or holding no usable entry at all.
 
-**A dropped entry is a line in a log nobody reads**, which is why the file is also checked before it can be merged. `scripts/validate_quotes.py` applies the loader's rules where a broken entry fails a pull request instead, plus the ones the loader has no opinion about:
+Because a dropped entry is a line in a log nobody reads, the file is also checked before it can be merged. `scripts/validate_quotes.py` applies the loader's rules where a broken entry fails a pull request instead, plus the ones the loader has no opinion about:
 
 | Checked | Why |
 |---|---|
@@ -180,11 +210,11 @@ The file is read at startup and **reports rather than raises**. An entry with no
 | No trigger listing the same line twice | A second way of answering is the point; the same way twice is a line pasted and half-edited |
 | Titles non-decreasing, LF endings, trailing newline | So the file stays reviewable and two branches adding a line do not collide |
 
-It needs PyYAML and nothing else, which is what keeps it a few seconds on every pull request rather than an image build.
+It needs PyYAML and nothing else, so it runs in seconds on every pull request rather than costing an image build.
 
 #### What a server adds for itself {#what-a-server-adds-for-itself}
 
-A film everybody in one channel has seen is usually one everybody in the next has too, which is why the list is one file. An in-joke is not, and a server with one writes it under `additional_quotes`, in its own `config` block and in the file's own shape:
+A server with an in-joke of its own writes it under `additional_quotes`, in its `config` block and in the file's own shape:
 
 ```yaml
 quotes:
@@ -199,15 +229,21 @@ quotes:
         over the top: "Over the top, {user}!"
 ```
 
-Everything the file can say, this can say: a trigger answering several ways lists its lines, a line naming whoever set it off writes `{user}`, and the two quoting rules above still bite — a title like `1917` and a line starting with `{user}` both need their quotes. A server that would rather keep its list in a file of its own writes the name of that file here instead; see [keeping that list somewhere else](#keeping-that-list-somewhere-else).
+Everything the file can say, this can say, and the [same rules](#the-quote-file) apply — including the two quoting traps: a title like `1917` and a line starting with `{user}` both need their quotes. A server keeping its list in a file of its own writes that file's name here instead; see [keeping that list somewhere else](#keeping-that-list-somewhere-else).
 
-**These are the same rules, applied per server.** A trigger appears once in one server's block, its lines are checked the same way, and an entry that fails is logged and dropped. What it does *not* do is stop the tool: the block is optional, and a server that gets it wrong still has the whole shipped list rather than nothing.
+- **A failed entry never stops the tool.** The block is optional, and a server that gets it wrong still has the whole shipped list.
+- **A trigger the shipped list already answers is overridden by this server's line**, for this server alone. The next server on the same deployment hears the shipped line.
+- **Titles merge.** `Firefly` written in both places is one film with everything either said under it, and a round asks about the same title either way.
+- **CI checks these too.** `scripts/validate_quotes.py --config config.yaml` walks every server's block. A trigger shared with the shipped list is the override, not a collision.
 
-**A trigger the shipped list already answers is answered by this server's line instead.** The deployment's file is what everybody agrees on rather than what they are held to, and a server that would rather `cool` earned something else should not have to pick a different phrase to say so. It is one server's decision and one server's alone; the next server on the same deployment hears the shipped line.
+<details class="why" markdown="1">
+<summary>Why the deployment's list is the default rather than the rule</summary>
 
-**Titles merge.** The list is keyed on the trigger and carries the title beside each line, so `Firefly` written in both places is one film with everything either of them said under it — and a round asking where either line came from asks about the same title.
+A film everybody in one channel has seen is usually one everybody in the next has too, which is why the bulk of the list is one file. An in-joke is not.
 
-**They are checked in CI like the file is.** `scripts/validate_quotes.py --config config.yaml` walks every server's block and applies the table above, so a broken addition fails a pull request rather than becoming a log line. Each block is checked on its own: a trigger a server shares with the shipped list is the override, not a collision.
+So the deployment's file is what everybody agrees on rather than what they are held to: a server that would rather `cool` earned something else should not have to pick a different phrase to say so.
+
+</details>
 
 #### Keeping that list somewhere else {#keeping-that-list-somewhere-else}
 
@@ -229,7 +265,7 @@ quotes:
     additional_quotes: https://quotes.example.com/beer-wars.yaml
 ```
 
-A string beginning `http://` or `https://` is downloaded; anything else is a path, where a leading `~` is the home directory. There is no second key saying which — the scheme is the whole rule.
+A string beginning `http://` or `https://` is downloaded; anything else is a path, where a leading `~` is the home directory. The scheme is the whole rule — there is no second key saying which.
 
 | | What to expect |
 |---|---|
@@ -238,11 +274,11 @@ A string beginning `http://` or `https://` is downloaded; anything else is a pat
 | How it is merged | As an inline block is — over the deployment's list, for that server alone |
 | What a download waits | 10 seconds, then the server starts without it |
 
-**A file it cannot get is a log line and nothing worse.** Missing, unreadable, not valid YAML, not a mapping of titles, a server that will not answer — each is reported and the server keeps the whole shipped list, on the same terms as a block written inline that turns out to be nonsense. The deployment's own file is the one that stops the tool starting; a server's is not.
+**A file it cannot get is a log line and nothing worse** — missing, unreadable, bad YAML, or a server that will not answer. The server keeps the whole shipped list. Only the deployment's own file can stop the tool starting.
 
-**A dropped entry names the line it was written on**, which is the one thing an inline block cannot do: `config.yaml` has been parsed by the time the tool sees it, and a file it points at is still a file.
+**A dropped entry names the line it was written on**, which an inline block cannot do: `config.yaml` has been parsed by the time the tool sees it, and a file it points at is still a file.
 
-**CI does not follow the name.** `validate_quotes.py --config` leaves a path or URL alone — a path in a config file is a path inside the deployment it configures, and the validator makes no network calls. Check the file behind it by passing it in like any other quote file:
+**CI does not follow the name.** `validate_quotes.py --config` leaves a path or URL alone, making no network calls. Check the file behind it by passing it in like any other quote file:
 
 ```bash
 python scripts/validate_quotes.py quotes/beer-wars.yaml --config config.yaml
@@ -250,37 +286,67 @@ python scripts/validate_quotes.py quotes/beer-wars.yaml --config config.yaml
 
 #### Matching and backoff
 
-Matching is **whole words, case-insensitive**, so `real` does not fire inside `really`. Several triggers are phrases rather than words, and a phrase matches on a single space between its words, which is what an ASR transcript holds.
+Matching is **whole words, case-insensitive**, so `real` does not fire inside `really`. A phrase trigger matches on a single space between its words, which is what an ASR transcript holds.
 
-**One line per utterance**, however many triggers were in the sentence: two quotes over the top of each other is a denial of service on the channel. The one that answers is the **earliest in the sentence** rather than the first in the file, since that is the one whoever spoke arrived at. Where two triggers start at the same word the longer wins.
+**One line per utterance**, however many triggers were in the sentence. The one that answers is the **earliest in the sentence** rather than the first in the file; where two start at the same word, the longer wins.
 
-**A trigger that has just fired goes quiet for `backoff_seconds`** — the server's own, or [`settings.quotes.backoff_seconds`](#settings-quotes) where it named none, five minutes by default. The joke is the recognition, and a channel that says "cool" four times in a minute does not want "Shiny." four times back. The window is keyed on the **trigger**, not the speaker and not the line, and is per server and held in memory only — so two channels arriving at the same line have each made the joke once, and a restart forgives every backoff.
+**A trigger that has just fired goes quiet for `backoff_seconds`** — the server's own, or [`settings.quotes.backoff_seconds`](#settings-quotes), five minutes by default. The window is keyed on the **trigger**, not the speaker and not the line, is per server, and is held in memory only, so a restart forgives every backoff.
 
-**The whole list is rendered at startup.** The triggers are a closed set and so are the answers, so on the way up the tool hands `tts` every line in the file. A callback that arrives four seconds after the line it answers is not a callback. The exception is a line naming whoever set it off, which is rendered once per name on the roster.
+**The whole list is rendered at startup**, the triggers and answers both being a closed set. A line naming whoever set it off is rendered once per name on the roster instead.
+
+<details class="why" markdown="1">
+<summary>Why one line, why a backoff, and why render ahead</summary>
+
+Two quotes over the top of each other is a denial of service on the channel, and the earliest trigger is the one whoever spoke actually arrived at.
+
+The joke is the recognition, and a channel that says "cool" four times in a minute does not want "Shiny." four times back. Keying the window on the trigger means two channels arriving at the same line have each made the joke once.
+
+A callback that arrives four seconds after the line it answers is not a callback.
+
+</details>
 
 #### Letting the speaker finish {#letting-the-speaker-finish}
 
-**A line waits for whoever set it off to stop talking**, `quiet_seconds` of it — one second by default. The ASR returns utterances rather than sentences and breaks wherever the speaker paused, so a trigger arrives in the middle of a thought about as often as at the end of one, and a line played the moment the trigger lands is the bot talking over the rest of what somebody was saying.
+**A line waits for whoever set it off to stop talking**, `quiet_seconds` of it — one second by default. **The window starts again every time that speaker says something else**, so what is waited out is them finishing rather than a fixed pause. Only their own utterances count.
 
-**The window starts again every time that speaker says something else**, so what is waited out is them finishing rather than a fixed pause after the trigger. Only their own utterances count — the rest of the channel talking is a conversation, not an unfinished sentence, and holds nothing up.
+A speaker already holding a line **sets nothing else off** while they are still going; they can still answer a round somebody else opened. The round opens when the line has finished playing, so the wait moves the question along with it. `quiet_seconds: 0` says the line where it was heard, interruption and all.
 
-A speaker already holding a line **sets nothing else off** while they are still going: whatever else is in the rest of their sentence, what they get is the one line, said once they have finished saying it. What they can still do is answer a round somebody else opened, since that is a question already in front of them rather than their own sentence.
+<details class="why" markdown="1">
+<summary>Why wait at all</summary>
 
-The round opens when the line has finished playing, so the wait moves the question along with it. `quiet_seconds: 0` says the line where it was heard, interruption and all.
+The ASR returns utterances rather than sentences and breaks wherever the speaker paused, so a trigger arrives mid-thought about as often as at the end of one. A line played the moment the trigger lands is the bot talking over the rest of what somebody was saying.
+
+The rest of the channel talking is a conversation rather than an unfinished sentence, which is why it holds nothing up. And a round somebody else opened is a question already in front of you, rather than your own sentence to finish.
+
+</details>
 
 #### Answering only some of it {#answering-only-some-of-it}
 
-`chance` is the odds a trigger is answered at all, between `0` and `1`, and **everything by default**. A server that turns it down gets a bot the channel is never quite sure is going to say anything, which is a different joke from one that always does — at `0.5` a phrase comes back about every other time it is said.
+`chance` is the odds a trigger is answered at all, between `0` and `1`, and **everything by default**. At `0.5` a phrase comes back about every other time it is said.
 
-The roll is **once per utterance**, not once per trigger, so a sentence carrying three of them is answered as often as one carrying one. A roll that goes the other way **spends nothing**: the trigger is not put on backoff, and the next time somebody says it, it is a fresh coin. Anything written outside the two ends is held at them, and `0` answers nothing at all — which is a deployment that wants the rounds and not the lines.
+The roll is **once per utterance**, not once per trigger, so a sentence carrying three is answered as often as one carrying one. A roll that goes the other way **spends nothing** — the trigger is not put on backoff. Values outside the two ends are held at them, and `0` answers nothing at all.
+
+<details class="why" markdown="1">
+<summary>Why you might want less than everything</summary>
+
+A bot the channel is never quite sure is going to say anything is a different joke from one that always does. And `0` is a deployment that wants the rounds without the lines.
+
+</details>
 
 #### Naming it
 
-**A line that has been said is also a question.** For `answer_seconds` afterwards the channel can say where it came from — `what is Firefly` — and whoever does is paid a credit through [`scoreboard`](#scoreboard), the same board `verbal-morality` takes them off, and told so out loud.
+**A line that has been said is also a question.** For `answer_seconds` afterwards the channel can say where it came from — `what is Firefly` — and whoever does is paid a credit through [`scoreboard`](#scoreboard), and told so out loud.
 
-The window opens when the line has **finished playing**, not when the trigger was heard. Transcription and synthesis take as long as they take, and a window that started at the trigger could be over before the channel had heard the question.
+The window opens when the line has **finished playing**, not when the trigger was heard: transcription and synthesis take as long as they take, and a window started at the trigger could be over before the channel had heard the question.
 
-**The first correct answer takes the round, and anyone inside `tie_seconds` of it is paid as well.** Two people arriving at the same title half a second apart both knew it, and which of them the transcriber happened to return first is not a fact about who was faster. Nobody is paid twice for the same title however many times they say it.
+**The first correct answer takes the round, and anyone inside `tie_seconds` of it is paid as well.** Nobody is paid twice for the same title however many times they say it.
+
+<details class="why" markdown="1">
+<summary>Why a tie window</summary>
+
+Two people arriving at the same title half a second apart both knew it, and which of them the transcriber happened to return first is not a fact about who was faster.
+
+</details>
 
 Answers are matched forgivingly, because an ASR transcript is not punctuated the way a poster is:
 
@@ -293,19 +359,19 @@ Answers are matched forgivingly, because an ASR transcript is not punctuated the
 
 The answer may sit anywhere in the sentence. A row with an empty `movie` asks nothing, there being no question in it. A title carrying a **numeral** is matched as a numeral — `Apollo 13` answers to `what is apollo 13` and not to `what is apollo thirteen`, which is what an ASR is likelier to return; write the title the way it will be transcribed if that matters.
 
-**Two rounds can be open at once**, since an answer names its own title and cannot be mistaken for an answer to the other. An utterance that answers an open round is an answer and nothing else, whatever trigger it also contains — otherwise a channel naming a title could set off the line that asks about the next one, which is a loop the tool would be driving rather than following.
+**Two rounds can be open at once**, since an answer names its own title. An utterance that answers an open round is an answer and nothing else, whatever trigger it also contains — otherwise a channel naming a title could set off the line asking about the next one, a loop the tool would be driving rather than following.
 
-A server with no `scoreboard` asks the question and pays nothing, which is said once at startup rather than left to be noticed.
+A server with no `scoreboard` asks the question and pays nothing, which is said once at startup.
 
 #### The announcement
 
-The award is said out loud, with **no chime in front of it**. A fine opens with one because it interrupts a conversation that was about something else; an award answers a question the channel is already sitting in.
+The award is said out loud, with **no chime in front of it** — a fine opens with one because it interrupts something else, while an award answers a question the channel is already sitting in.
 
 ```
 Correct! Erik, you are awarded 1 credit for quoting along at home.
 ```
 
-**The ending is drawn fresh each time**, from the list the tool ships with plus whatever `remarks` adds to it. One fixed sentence is a joke told once and then endured. The shipped endings are:
+**The ending is drawn fresh each time**, from the list the tool ships with plus whatever `remarks` adds to it — one fixed sentence is a joke told once and then endured. The shipped endings are:
 
 - `knowing exactly where that came from, which explains a great deal.`
 - `quoting along at home.`
@@ -314,23 +380,30 @@ Correct! Erik, you are awarded 1 credit for quoting along at home.
 - `being the sort of person who knows that.`
 - `spending your formative years exactly as you did.`
 
-`remarks` **adds** to those rather than replacing them. None of the shipped endings says "film" — the key is called `movie` because it started that way, but a trigger answers for a series, a game, or a book as often as a picture, and an announcement that guesses wrong guesses wrong out loud. Write your own the same way.
+`remarks` **adds** to those rather than replacing them. None of the shipped endings says "film", and the `movie` key is named more narrowly than it behaves — a trigger answers for a series, a game, or a book as often as a picture, and an announcement that guesses wrong guesses wrong out loud. Write your own the same way.
 
 Somebody paid on a **tie** gets the second wording — `Eli, you are also awarded 1 credit, for getting there at the same time.` — because the whole sentence again reads as though the bot had lost track of what it just said.
 
-**Nothing this tool says is dropped for landing while something else is playing**, which is the one place it parts company with `verbal-morality`. Everything `quotes` says is an answer to something it just said itself. Announcements wait their turn on the speaker's per-server lock and come out in the order they were earned.
+**Nothing this tool says is dropped for landing while something else is playing**, unlike `verbal-morality`: everything `quotes` says answers something it just said itself. Announcements wait their turn on the speaker's per-server lock and come out in the order they were earned.
 
 #### Naming your own line
 
-**Whoever set a line off cannot name it.** They have the trigger and the title in front of them and had to recall neither, so a round they could win is one anybody can farm by reading the quote file out loud. An attempt is refused out loud and **costs them `self_answer_penalty` credits**:
+**Whoever set a line off cannot name it.** An attempt is refused out loud and **costs them `self_answer_penalty` credits**:
 
 ```
 Nuh uh uh. Erik, you set it off, so you do not get to name it. You are fined 5 credits for being a dick.
 ```
 
-Refused rather than quietly ignored, because a rule nobody is told about is one everybody keeps testing. The penalty is deliberately larger than the single credit the attempt was worth, and it is taken **once per round** however many times they say it. An attempt **neither wins the round nor spoils it**: whoever names it next is the first answer and is paid in full. The bar is per round, not per person.
+The penalty is taken **once per round** however many times they say it, and an attempt **neither wins the round nor spoils it** — whoever names it next is the first answer and is paid in full. The bar is per round, not per person. `penalize_self_answers: false` drops the rule entirely.
 
-`penalize_self_answers: false` drops the rule entirely.
+<details class="why" markdown="1">
+<summary>Why it costs more than the round was worth</summary>
+
+Whoever set a line off has the trigger and the title in front of them and had to recall neither, so a round they could win is one anybody can farm by reading the quote file out loud. The penalty is deliberately larger than the single credit the attempt was worth.
+
+Refused out loud rather than quietly ignored, because a rule nobody is told about is one everybody keeps testing.
+
+</details>
 
 ### summary {#summary}
 
@@ -351,11 +424,16 @@ That is a working block. Everything else has a default.
 
 #### Which channels
 
-**Everything is per voice channel, under `monitored_channels`, and that mapping is also the switch.** A channel that is not in it is **not transcribed**, not summarized, not posted, and does not answer the question either — one rule rather than four, so a room left off the list is left off entirely. See [the capture schedule]({{ '/about/#the-capture-schedule' | relative_url }}) for what that means for the transcript, and note the consequence: **turning this tool off stops the server writing anything down.**
+**`monitored_channels` is the switch as well as the settings.** A channel not in it is **not transcribed**, not summarized, not posted, and does not answer the question either — one rule rather than four. The consequence is worth stating plainly: **turning this tool off stops the server writing anything down.** See [the capture schedule]({{ '/about/#the-capture-schedule' | relative_url }}).
 
-Per channel rather than per server because a server's rooms are not interchangeable. One is where a game night happens and one is where two people are debugging something, and a bot that summarizes every room it was ever dragged into is writing files nobody asked for and posting them where everybody can read them.
+Keys are matched through the same slug that names the transcript directory, so `General Voice` and `general-voice` are the same channel, and **the key you write is exactly the directory the summaries land in**.
 
-Keys are matched through the same slug that names the transcript directory, so `General Voice` and `general-voice` are the same channel, and **the key you write is always exactly the directory the summaries land in**.
+<details class="why" markdown="1">
+<summary>Why per channel rather than per server</summary>
+
+A server's rooms are not interchangeable. One is where a game night happens and one is where two people are debugging something, and a bot that summarizes every room it was ever dragged into is writing files nobody asked for and posting them where everybody can read them.
+
+</details>
 
 #### Per-channel settings
 
@@ -370,7 +448,7 @@ Keys are matched through the same slug that names the transcript directory, so `
 | `minimum_utterances` | `5` | Below this a session is not a conversation and is not summarized |
 | `backoff_seconds` | `120` | How soon the channel can be told the same evening again. `0`, or below, tells it every time |
 | `session_gap_minutes` | `10` | How long the room can sit quiet before the rest of the night is a different evening. Not `resume_seconds`, and not to be set to match it |
-| `schedule` | *(unset)* | When a session in this room may **start** being written down, as a list of `Wed 17:00-00:00`. Also what makes several sessions [one sitting](#one-evening-several-sessions) to summarize. Unset keeps every session, or whatever `settings.transcripts.schedule` says |
+| `schedule` | *(unset)* | When a session in this room may **start** being written down — see [writing a window](#writing-a-window). Also what makes several sessions [one sitting](#one-evening-several-sessions). Unset keeps every session, or whatever `settings.transcripts.schedule` says |
 | `preamble` | `Sure! Let me go look at my notes.` | What plays while the model is thinking |
 | `empty` | `I don't have any notes from this channel yet.` | What plays when nothing has ever been written down in this room |
 | `missing` | `I don't have any notes from then.` | What plays when there are notes, just not from the evening that was named |
@@ -387,42 +465,52 @@ Keys are matched through the same slug that names the transcript directory, so `
 
 #### One evening, several sessions {#one-evening-several-sessions}
 
-A transcript is one **connection** to a voice channel, and a room produces several in a night — everybody steps out for ten minutes, somebody drags the bot next door, a pod restarts. None of those is the evening, and an account per connection is four half-summaries of one conversation.
+A transcript is one **connection** to a voice channel, and a room produces several in a night — everybody steps out, somebody drags the bot next door, a pod restarts.
 
-**Where the room is on a `schedule`, what gets summarized is the window.** A session that opened inside one occurrence of a window — this particular Wednesday evening, not Wednesday evenings in general — is summarized together with every other session filed inside that same occurrence. The account is written under the name of the session that **opened** the sitting, and every subsequent seal inside the window rewrites that one file, so the evening leaves a single summary that gets fuller rather than a pile of overlapping ones. The message in `channel` works the same way: it is headed with when the sitting started, and every rewrite edits that same message rather than posting beside it, so the channel ends the evening holding one account of it and not four that all carry the same date. An account that still fits the messages it is in is rewritten in place, however many that is. One that has outgrown them is posted again whole and the old run comes down — nothing is left at the old address, because **the first message of an account is pinned** and that is how an evening is found. Deleting a message unpins it, so a replaced run takes its own pin off the list on the way out.
+**Where the room is on a `schedule`, what gets summarized is the window.** Every session that opened inside one occurrence of a window is summarized together, under the name of the session that **opened** the sitting. Each subsequent seal rewrites that one file, and edits that one message in `channel`, so the evening leaves a single account that gets fuller rather than four overlapping ones.
 
-Which occurrence a session belongs to is decided by **when it opened**, which is the same moment the schedule was asked about when it decided whether to write the session down at all. A window says when a sitting may start rather than how long it may run, so a session that opened at 23:40 inside `Wed 17:00-00:00` and sealed at 01:20 is part of Wednesday's evening — and it is usually the longest part of it. Windows that overlap count as one stretch, from the earliest start to the latest end; windows written back to back (`Wed 17:00-00:00` and `Thu 00:00-02:00`) are separate sittings, since the interval is half-open and only one of them covers any instant.
+- **Which occurrence a session belongs to is decided by when it opened.** A window says when a sitting may start, not how long it may run, so a session opening at 23:40 inside `Wed 17:00-00:00` and sealing at 01:20 is part of Wednesday's evening.
+- **Overlapping windows count as one stretch**, from earliest start to latest end. Back-to-back windows (`Wed 17:00-00:00` and `Thu 00:00-02:00`) are separate sittings, the interval being half-open.
+- **`minimum_utterances` is measured against the whole sitting**, so two visits of three lines are a conversation where either alone would not be. A session that wrote nothing down triggers no rewrite.
+- **Outside a window, nothing changes.** A session opened by `!start-transcribing`, or in a deployment with no schedule at all, is summarized on its own under its own name.
 
-A session that wrote nothing down does not trigger a rewrite: the sitting holds what it held, and asking for the same paragraphs again is a completion nobody reads. `minimum_utterances` is measured against the **whole** sitting, so two visits of three lines are a conversation where either alone would not be.
+**The first message of an account is pinned**, and that is how an evening is found. An account that still fits its messages is rewritten in place; one that has outgrown them is posted again whole and the old run deleted, which takes its own pin off the list.
 
-**Outside a window, nothing changes.** A session that opened when no window covered it — a room put on the record by hand with `!start-transcribing`, or any room in a deployment that has configured no schedule at all — is summarized on its own, filed under its own name, exactly as before. That is the point of starting one by hand: it is a deliberate account of one conversation, and the sessions on either side of it were deliberately not kept.
+<details class="why" markdown="1">
+<summary>Why a sitting rather than a session</summary>
+
+None of those interruptions is the evening, and an account per connection is four half-summaries of one conversation. What somebody wants an account of is the night.
+
+Starting one by hand is the deliberate exception: it is an account of one conversation, and the sessions on either side of it were deliberately not kept.
+
+</details>
 
 #### Showing it as it is said {#showing-it-as-it-is-said}
 
-`post_transcripts` puts the last `transcript_lines` of what the room has said into **one message** in the same `channel` the summary goes to, and rewrites that message as the room talks. It is off unless a channel asks for it, and that is a deliberate asymmetry rather than caution: the transcript on disk is a file in a volume with a retention window, while the same words in a text channel are permanent, searchable, and readable by everyone in the server rather than everyone who was in the room.
+`post_transcripts` puts the last `transcript_lines` of what the room has said into **one message** in the same `channel` the summary goes to, and rewrites it as the room talks. It is **off unless a channel asks for it**: the transcript on disk is a file in a volume with a retention window, while the same words in a text channel are permanent, searchable, and readable by everyone in the server rather than everyone who was in the room.
 
-**`transcript_lines` is a maximum rather than a promise.** A ring holds lines and a message holds characters, and ten people saying a sentence each is a very different size from ten reading a paragraph each. So the feed shows as many of the newest lines as fit and drops the oldest off the top — whole lines, never a cut partway through the block, because the first thing at the front of it is the code fence and a block that loses its fence stops being a block: no monospace for the column of names, and every asterisk the transcriber returned handed back to Markdown to interpret.
+**It needs Pin Messages, which Manage Messages does not carry.** Discord split the two apart, so a bot trusted to delete anybody's message can still be refused a pin. Without it the feed works unpinned and says so once per session in the log. Posting needs Send Messages; editing and deleting its own messages is ungoverned.
 
-**A long line costs the lines above it rather than its own tail.** There is no cap on one utterance unless a channel sets `transcript_line_limit`. Somebody watching the feed is watching to see what the transcriber heard, and a sentence that stops at a number tells them nothing about the words after it — while the lines above are ones the room was about to lose anyway. A channel that would rather keep the short lines sets a number, and gets an `…` on anything longer.
+**`transcript_lines` is a maximum rather than a promise.** A ring holds lines and a message holds characters, so the feed shows as many of the newest lines as fit and drops the oldest off the top — whole lines, never a cut partway through the block.
 
-The feed spends 100 characters less than a message holds. Nothing needs the margin — the block is built to fit and cut to fit underneath that — but being wrong costs a message Discord refuses and a room watching a feed that stopped moving, where being careful costs a line of transcript. The one case that still loses the end of a sentence is a single utterance longer than the whole budget, where there are no lines above left to drop; that takes about five unbroken minutes of talking.
+**A long line costs the lines above it rather than its own tail.** There is no cap on one utterance unless a channel sets `transcript_line_limit`, which puts an `…` on anything longer.
 
-**It writes on change, not on a timer.** An utterance adds a line to a ring and nothing else; a loop per room writes the block when what it would say differs from what is on the message, then waits out `transcript_refresh_seconds` before looking again. A quiet room costs nothing, and a burst of four people landing together is one edit rather than four.
+**It writes on change, not on a timer**, waiting out `transcript_refresh_seconds` from the **end** of each write. A quiet room costs nothing, a burst of four people landing together is one edit, and a slow Discord slows the feed instead of building a backlog. Below `0.25` is held there.
 
-That shape is what keeps it inside Discord's limits. Editing a message is roughly **five requests every five seconds per channel** — against two every ten minutes for a voice channel's status, which is why this is a message and [`scoreboard`](#scoreboard) is a topic. The default of two seconds spends a quarter of that, leaving room for a summary or a fine posted in the same channel. Below `0.25` is held there, because discord.py sleeps out a rate limit instead of failing: asking for more buys a feed that silently runs behind a room that thinks it is watching itself live.
+**It comes down when the room does**, deleted as the session seals rather than after the summary is written. The next session posts a new one; what the evening leaves behind is the summary.
 
-The wait is measured from the **end** of a write, so an edit that spent a second sitting out a rate limit is followed by the whole interval rather than by an already-queued next one. A slow Discord slows the feed instead of building a backlog.
+<details class="why" markdown="1">
+<summary>Why whole lines, a rate floor, and a sweep on restart</summary>
 
-**It is pinned while it is live**, so a room that is talking can reach it from the pin list rather than scrolling for it. Deleting a message takes it off that list by itself, so taking the feed down needs no second call and never leaves a channel's fifty pins one short. Discord's own `pinned a message to this channel` notice stays in the history; that is the cosmetic cost of the pin.
+The first thing at the front of the block is a code fence, and a block that loses its fence stops being a block: no monospace for the column of names, and every asterisk the transcriber returned handed back to Markdown. The fence is also what stops an ASR transcript of somebody saying "at everyone" from pinging the server. Lines are `Name: what they said`, with backticks removed and whitespace collapsed so neither can break out.
 
-**The pin is the only part that needs a permission.** Posting needs Send Messages; editing and deleting a message the bot wrote itself are ungoverned, which is also why the restart sweep only ever takes down blocks of its own. Pinning needs **Pin Messages**, which Manage Messages does **not** carry — Discord split the two apart, so a bot trusted to delete anybody's message in a channel can still be refused a pin on its own. Without it the feed works unpinned and says so once per session in the log.
+Truncating a long line is the wrong trade: somebody watching the feed is watching to see what the transcriber heard, and a sentence that stops at a number tells them nothing, while the lines above were about to be lost anyway. The feed also spends 100 characters less than a message holds, because being wrong costs a message Discord refuses while being careful costs one line.
 
-**It comes down when the room does.** The message is deleted as the session seals — before the summary that replaces it has even been asked for, since a feed taken down at the end would spend the length of a summary showing the last thing somebody said on their way out as though it were current. The next session posts a new one. What the evening leaves behind is the summary.
+Editing a message is roughly five requests every five seconds per channel — against two every ten minutes for a voice channel's status, which is why this is a message and [`scoreboard`](#scoreboard) is a topic. Two seconds spends a quarter of that. Below `0.25` is refused because discord.py sleeps out a rate limit rather than failing, so asking for more buys a feed silently running behind a room that thinks it is watching itself live.
 
-Two things are worth knowing before you turn it on:
+Which message is being written to is held in memory only, so a process that goes away mid-session leaves one behind. The next post reads the channel's pins and deletes whatever this bot left there, rather than persisting an ID that would have to be kept in step with a channel somebody may have cleared. The sweep skips summary accounts: a feed is message content and carries no embed, an account is embeds and carries no content, so the two are told apart structurally rather than remembered.
 
-- **Lines are fenced.** Each is `Name: what they said`, with backticks removed and whitespace collapsed so that neither can break out of the block. The code fence is what stops an ASR transcript of somebody saying "at everyone" from pinging the server, and what stops a stray asterisk italicising the rest of the feed.
-- **A restart is swept up on the way past.** Which message is being written to is held in memory only, so a process that goes away mid-session leaves one behind. The pin list is where that is findable: the next post reads the channel's pins and deletes whatever this bot left there, rather than persisting an ID to a file that would have to be kept in step with a channel somebody may have cleared. Nothing accumulates. The bot pins one other thing — the first message of each summary account, in this same channel — and the sweep skips those: a feed is message content and carries no embed, an account is embeds and carries no content, so the two are told apart structurally rather than remembered.
+</details>
 
 #### Writing it down
 
@@ -433,31 +521,47 @@ Erik: that should work
 Eli: it did not
 ```
 
-`user_id` goes because a model cannot look anybody up by it. The timestamp goes because the lines are already in the order they were spoken and every prompt says so. Consecutive lines from one speaker are joined, because the segmenter cuts on a pause rather than on a sentence and three attributions in a row reads as an exchange that never happened.
+Consecutive lines from one speaker are joined. That goes to the endpoint with the channel's `prompt`, and what comes back is written to `SUMMARY_DIR` and posted to the channel named in `channel:` — by **name**, resolved when it is posted, so a renamed channel silently stops receiving posts and an unresolvable one is reported at startup. Leaving `channel:` out writes to disk and posts nothing.
 
-That goes to the endpoint with the channel's `prompt`, and what comes back is written to `SUMMARY_DIR` and posted to the text channel named in `channel:` — by **name**, resolved against the server when it is posted. The cost is that a renamed channel silently stops receiving posts, which is why an unresolvable one is reported at startup rather than at the end of the first session worth keeping. Leaving `channel:` out writes summaries to disk and posts nothing, which is a whole working configuration for a server that only wants the spoken recap.
+A session under `minimum_utterances` is not summarized. **A failure anywhere costs the summary and nothing else** — nothing partial is written or posted, and the transcript is untouched, so a session missed because the endpoint was down can be summarized by hand later.
 
-A session under `minimum_utterances` is not summarized: a summary of four lines is longer than the four lines. **A failure anywhere costs the summary and nothing else** — nothing partial is written and nothing partial is posted, and the transcript is untouched, so a session missed because the endpoint was down can be summarized by hand later.
+**A whole session is sent in one request, and it is not truncated.** A long evening is tens of thousands of tokens, and an endpoint whose context will not take it refuses the request — logged, no file, no post, transcript intact. **Point `LLM_MODEL` at something with the context to hold a session.**
 
-**A whole session is sent in one request, and it is not truncated.** A long evening is tens of thousands of tokens, and an endpoint whose context will not take it refuses the request — which is a failure like any other: logged, no file, no post, transcript intact. Silently cutting a transcript would produce a summary that reads as complete and covers the first hour, which is worse than not having one. Point `LLM_MODEL` at something with the context to hold a session.
+**Keep [`settings.llm.timeout_seconds`](#settings-llm) well under `terminationGracePeriodSeconds`.** A session sealed as the pod goes down is summarized inside the shutdown, so a whole LLM round trip runs inside the grace period and can be killed by it.
 
-> **On shutdown.** A session sealed as the pod goes down is summarized inside the shutdown, before the gateway connection closes, so a whole LLM round trip runs inside the termination grace period and can be killed by it. That is accepted — the transcript survives and the summary is the derived artifact — but it is why [`settings.llm.timeout_seconds`](#settings-llm) should stay well under `terminationGracePeriodSeconds`.
+<details class="why" markdown="1">
+<summary>Why those fields go, and why a long evening is refused rather than cut</summary>
+
+`user_id` goes because a model cannot look anybody up by it, and the timestamp goes because the lines are already in the order they were spoken and every prompt says so. Consecutive lines are joined because the segmenter cuts on a pause rather than on a sentence, and three attributions in a row reads as an exchange that never happened.
+
+Silently cutting a transcript would produce a summary that reads as complete and covers the first hour, which is worse than not having one.
+
+A summary killed by the grace period is accepted: the transcript survives, and the summary is the derived artifact.
+
+</details>
 
 #### Reading it back
 
 **"Miss Quote, what happened last session"** and the bot tells you, out loud, having run the stored summary through a second prompt that turns a thing you read into a thing you say.
 
-It answers **for that channel**, with the whole of the evening asked about. A session still in progress has no summary yet, so this is the previous conversation even when it is asked for in the middle of one, which is exactly what "last session" means. What counts as one evening is [a run of sessions]({{ '/about/#one-evening-is-not-always-one-session' | relative_url }}), not one file.
+It answers **for that channel**, with the whole of the evening asked about — [a run of sessions]({{ '/about/#one-evening-is-not-always-one-session' | relative_url }}), not one file. A session still in progress has no summary yet, so this is the previous conversation even asked in the middle of one.
 
-Asking takes **both** a name and a trigger, the name first. An unaddressed "what happened last session" is somebody talking to the room, and answering it would be a minute of narration nobody asked for. Punctuation is ignored on both sides, and several spellings of the name ship by default, because an ASR guesses phonetically at a name it has never been told and "Miss Quote" comes back as one word about as often as two.
+Asking takes **both** a name and a trigger, the name first; punctuation is ignored on both sides. Several spellings of the name ship by default, an ASR guessing phonetically at a name it has never been told.
 
-**It does not have to be one breath.** An ASR returns utterances rather than sentences and splits wherever the speaker paused, so "Miss Quote, what happened on the twenty ninth" arrives as two lines about as often as one — and neither half asks anything by itself. A name said with no question after it is **held for `address_window_seconds`**, fifteen by default, so the next thing that speaker says can finish the question. It is per speaker, so somebody else's "what happened" is not answered off your name; it is let go once it has produced a question, and otherwise ages out; and the trigger still has to be followed by a clause or by nothing, so the window is not the only thing between this and a room saying "recap" about something else. Setting it to `0` wants the whole question in one breath, as before.
+**It does not have to be one breath.** A name said with no question after it is **held for `address_window_seconds`**, fifteen by default, so that speaker's next utterance can finish the question. It is per speaker, and `0` wants the whole question at once. A question that named no evening then **waits `clause_window_seconds`**, a second and a half, to see whether one is still coming — covered by the preamble, so it costs nothing to listen to.
 
-**The same break lands after the trigger, too**, and that half is the worse one: "Miss Quote, what happened" is a complete question by itself, so answering it the moment it arrives retells the *last* session and "on the twenty ninth" is never heard — a wrong answer rather than none. So a question that named no evening **waits `clause_window_seconds`**, a second and a half by default, to see whether one is still coming.
+What none of this recovers is the two halves arriving the other way round: transcription runs several at a time, and an utterance is stamped when it is written rather than when it was said, so there is nothing to sort by.
 
-That wait is free, which is the point. The preamble — *"Sure! Let me go look at my notes."* — is true whichever night is meant, so it plays *over* the wait rather than after it, and the channel hears the bot answer as immediately as it always did. Only an evening nobody named waits at all: a question that said which night it meant is finished, and is answered without any delay. The completion is started on the evening in hand before the wait ends and thrown away only if the channel names a different one, so the single ask that pays for a second lookup is the one that changed its mind mid-sentence — and it pays while the preamble is still playing. An evening already inside `backoff_seconds` is dropped where it always was rather than held open on the chance that a clause names some other night.
+<details class="why" markdown="1">
+<summary>Why a name is required, and why the wait is free</summary>
 
-What none of this recovers is the two halves arriving the other way round. Transcription runs several at a time, so a short second utterance can come back before a long first one, and an utterance is stamped when it is written rather than when it was said — there is nothing to sort by. The order it does recover is the one an ASR actually produces.
+An unaddressed "what happened last session" is somebody talking to the room, and answering it would be a minute of narration nobody asked for.
+
+An ASR returns utterances rather than sentences and splits wherever the speaker paused, so "Miss Quote, what happened on the twenty ninth" arrives as two lines about as often as one, and neither half asks anything by itself. The half after the trigger is the worse one: "Miss Quote, what happened" is a complete question, so answering it immediately retells the *last* session and "on the twenty ninth" is never heard — a wrong answer rather than none.
+
+The preamble is true whichever night is meant, so it plays *over* the clause wait rather than after it. Only an evening nobody named waits at all; a question that said which night it meant is answered with no delay. The completion is started on the evening in hand before the wait ends and thrown away only if the channel names a different one, so the single ask that pays for a second lookup is the one that changed its mind mid-sentence — and it pays while the preamble is still playing.
+
+</details>
 
 A trigger is the **start** of a question rather than the whole of one, and what follows it says which evening:
 
@@ -467,37 +571,42 @@ A trigger is the **start** of a question rather than the whole of one, and what 
 | `last week`, `a week ago`, `two weeks ago` … `eight weeks ago` | The evening nearest that date, within three days either way |
 | `on the twelfth`, `the twenty fifth`, `the 12th` | That day exactly |
 
-The ordinals are spelled out because that is what comes back: a transcriber writes "the twenty fifth" for a spoken date, not "the 25th". Digits are understood too, for the one that does, but a **bare** number is not a date — "recap the three things" is a request about something else.
+Ordinals are spelled out because that is what an ASR returns; digits work too, but a **bare** number is not a date — "recap the three things" is about something else. A named day resolves to one of the last two months, earlier this month if it has already been and the month before if it has not, with today counting as "has not". A day the resolved month does not have gets the `missing` line rather than sliding to a date nobody named. Counting back weeks gets a few days of latitude, ties going to the later evening; naming a day gets none.
 
-A named day is read as one of the last two months: earlier this month if it has already been, and the month before if it has not. Today counts as "has not", since a day that has not finished is not an evening anybody has notes from yet. A day the resolved month does not have gets the `missing` line rather than sliding to a neighbouring date nobody named.
+**A trigger has to be followed by one of those clauses or by nothing at all**, which is what keeps "Miss Quote, what happened to my beer" from being a question about last Thursday.
 
-Counting back weeks gets a few days of latitude because a channel that meets on a night of the week does not meet on a date; a tie between two equally close evenings goes to the later one. Naming a day gets none. A day with two conversations on it resolves to the later.
+The bot plays the pre-rendered `preamble` and **starts the inference before it starts saying it**, so the announcement covers the wait. The lookup happens first, so it never announces that it is going to look and then finds nothing: with nothing to find it says the `empty` line, or `missing` if the trouble is the night that was named.
 
-This is also why the trigger list is short. `what happened` covers every row of that table, so there is no line per date anybody might name — and because the stems no longer carry a date, a trigger has to be followed by one of those clauses **or by nothing at all**. That is what keeps "Miss Quote, what happened to my beer" from being a question about last Thursday.
+A second ask while a retelling is still going is dropped rather than queued. `backoff_seconds` is per **evening** rather than per channel, since somebody asking about a different night is asking a different question.
 
-The part worth explaining is the silence. Inference takes seconds, so the bot plays a pre-rendered *"Sure! Let me go look at my notes."* — and **starts the inference before it starts saying it**, so the announcement covers the wait rather than being followed by one. The lookup happens first, so the bot never announces that it is going to look and then finds nothing; with nothing to find it says the `empty` line — or the `missing` one, if the trouble is the night that was named — and stops.
+**The retelling itself is never cached** — it is composed for one moment and nobody will ever ask for those exact words again. The preamble, the empty line, and a `closing` are kept.
 
-A second ask while a retelling is still going is dropped rather than queued, and `backoff_seconds` is how soon after one the channel can be told it again. The window is per **evening**, not per channel: what it exists to stop is the same story twice, and somebody asking about a different night is asking a second question with a different answer.
+<details class="why" markdown="1">
+<summary>Why the trigger list is short, and why weeks get latitude</summary>
 
-**The retelling itself is never cached.** The account of one evening is composed for one moment and nobody will ever ask for those exact words again. It is synthesized, played, and let go — the preamble, the empty line, and a `closing` if there is one are the ones worth keeping, and those are.
+`what happened` covers every row of that table, so there is no line per date anybody might name — and because the stems carry no date of their own, the clause is what disambiguates.
+
+A channel that meets on a night of the week does not meet on a date, so counting back weeks lands on the nearest evening within three days. Naming a day is exact, because somebody who named one meant it. A day with two conversations on it resolves to the later.
+
+</details>
 
 #### Hold music
 
-The preamble covers a couple of seconds. A completion routinely runs longer, and what is left over is dead air. `hold_music` fills that.
+A completion routinely runs longer than the preamble, and what is left over is dead air. `hold_music` fills that.
 
-It is **off unless a channel names a clip**, and nothing is shipped — the audio is yours. Drop a 16-bit WAV in `SPEECH_DIR/chimes` beside the flourishes and name it here without its extension. It **loops**, so what belongs there is a short passage that meets itself rather than a track; and since a clip is read into memory whole and held for the life of the process, ten to thirty seconds is the size to author, not three minutes.
+It is **off unless a channel names a clip**, and nothing is shipped. Drop a 16-bit WAV in `SPEECH_DIR/chimes` and name it here without its extension. It **loops**, so author a short passage that meets itself — ten to thirty seconds, not three minutes, since a clip is read into memory whole and held for the life of the process.
 
 - **It fades up** over [`settings.tts.hold_fade_in_ms`](#settings-tts) (500 ms) as soon as the preamble ends. Quickly, because the gap it is covering has already started.
 - **It loops for as long as the wait lasts** — the model thinking, and then the synthesizer starting on the answer. Both are covered: a completion that returns instantly still leaves the `lead_ms` head start to be waited out.
 - **It fades down** over `settings.tts.hold_fade_out_ms` (2 s), starting only once the first speech is in hand, so the music reaches silence exactly where the first word begins rather than being cut off at it.
 
-The music and the retelling are **one clip**, armed once — two calls would put a gap exactly where this is trying not to have one. `hold_volume` says how loud the music is next to `PLAYBACK_VOLUME` and applies to the music alone; the retelling arrives at the loudness it would have had anyway. A clip that is missing, or will not parse, costs the music and not the answer. The name is checked at startup and reported if it is not there, and kept regardless, so a volume mounted later starts working without a restart.
+The music and the retelling are **one clip**, armed once — two calls would put a gap exactly where this is trying not to have one. `hold_volume` applies to the music alone; the retelling arrives at the loudness it would have had anyway. A clip that is missing or will not parse costs the music and not the answer, and the name is checked at startup but kept regardless, so a volume mounted later starts working without a restart.
 
-**The story ends itself.** A retelling runs to a minute and ends wherever the model chose to end it, so a channel that has been listening has no way to tell "finished" from "stopped". `bard` is told to close on a line that means the tale is over, in the voice it has been telling it in. `closing` is the other way to do it: a fixed sentence, played after the story. It is **unset by default**, since a fixed line following one that has just said goodbye is one goodbye too many.
+**The story ends itself.** A retelling ends wherever the model chose to, so a channel listening has no way to tell "finished" from "stopped". `bard` is told to close on a line that means the tale is over. `closing` is the other way: a fixed sentence after the story, **unset by default**, since a fixed line following one that has just said goodbye is one goodbye too many.
 
 #### Prompts
 
-Prompts are named and selected by name. Three ship, as prose in `src/miss_quote/resources/prompts.yaml` rather than as strings in the source — a prompt is content, and the file also says which one does each job by default:
+Prompts are named and selected by name. Three ship, as prose in `src/miss_quote/resources/prompts.yaml`:
 
 | Name | For | Output goes to |
 |---|---|---|
@@ -505,7 +614,7 @@ Prompts are named and selected by name. Three ship, as prose in `src/miss_quote/
 | `minutes` | Topics, decisions, and open questions, as headed sections | A Discord message |
 | `bard` | The default retelling. A bard telling the room its own evening back, in the third person, cut down to what actually mattered and signed off so the room knows it ended | **A speech synthesizer**, so it forbids Markdown, bullets, and emoji at some length — a synthesizer reads an asterisk out as a word |
 
-`prompts:` adds your own to those, and one written under a shipped name replaces it — which is how a server that likes the structure of `recap` and not its tone changes the tone without inventing a name for it. It sits at the tool level rather than inside a channel because a prompt is a library entry, and restating a paragraph of instructions once per room is how two of them end up saying different things by accident.
+`prompts:` adds your own, and one written under a shipped name replaces it. It sits at the tool level rather than inside a channel, a prompt being a library entry rather than a per-room setting.
 
 A prompt of your own can pull in the text the shipped ones share by naming it in braces:
 
@@ -516,9 +625,9 @@ A prompt of your own can pull in the text the shipped ones share by naming it in
 | `{retelling_closing}` | The instruction to end on a line that means the story is over |
 | `{words}` | Filled per channel from `retelling_words`. Cannot be used as a fragment name |
 
-Any other braces are left exactly as written, so an example of the JSON you want back survives. A shipped prompt naming a fragment that does not exist stops the bot at startup; one of your own is left alone, since braces in it are usually deliberate.
+Any other braces are left exactly as written, so an example of the JSON you want back survives. A shipped prompt naming a fragment that does not exist stops the bot at startup; one of your own is left alone, braces in it usually being deliberate.
 
-**A prompt named by a name nothing answers to stops the tool from starting**, reported alongside every other startup problem. A tool running on instructions nobody asked for produces summaries that look fine and are not what the file requested, which is worse than a tool that refuses.
+**A prompt named by a name nothing answers to stops the tool from starting.** A tool running on instructions nobody asked for produces summaries that look fine and are not what the file requested, which is worse than a tool that refuses.
 
 ### scoreboard {#scoreboard}
 
@@ -529,25 +638,31 @@ scoreboard:
   enabled: true
 ```
 
-There is nothing to configure per server. What the tally is counted in and how often it is written and published are [`settings.credits`](#settings-credits), and where it lives is `CREDITS_FILE`, because there is one file behind every server's board and how often it is written is a property of the file rather than of any one server.
+There is nothing to configure per server. What the tally is counted in and how often it is written and published are [`settings.credits`](#settings-credits); where it lives is `CREDITS_FILE`.
 
-**It is enabled separately from whatever is counting.** A server that wants fines announced but not tallied enables `verbal-morality` and not this; the fines are announced and nothing is kept, and the log says so once at startup rather than leaving it to be discovered by wondering why the channel topic is empty.
+**It is enabled separately from whatever is counting.** A server enabling `verbal-morality` and not this announces fines and keeps nothing, which the log says once at startup.
 
-**The standings go in the voice channel topic**, as `Eli: -9 Erik: -2 Luke: -1 Ryan: 0`, which makes the topic the scoreboard — visible without asking the bot anything. They go up as soon as the bot takes up a channel and are kept current for as long as it sits there; a channel the bot leaves keeps the last board it was shown. A fine is a **debit**: everybody starts at nothing and goes down, so the number beside a name reads as what swearing has cost them rather than as points collected. Nothing assumes that direction, and `quotes` calls `credit` to pay for a title named in time, so a balance can climb back toward nothing and past it.
+**It needs Set Voice Channel Status** — not Manage Channels. What it sets is the channel's **status**, a voice channel having no topic. Without the permission the tool logs once per change and keeps counting.
 
-The board holds the **four furthest into the red, worst first**. A leaderboard rearranges itself every time somebody passes somebody else, which is the objection to publishing a whole roster in name order; at four places it is short enough to read at a glance. Ties break on the name, so two people on the same balance do not swap places between one edit and the next for no reason anybody can see.
+**The standings read `Eli: -9 Erik: -2 Luke: -1 Ryan: 0`**, holding the **four furthest into the red, worst first**, ties breaking on the name. They go up as soon as the bot takes up a channel and stay current while it sits there; a channel it leaves keeps the last board it was shown.
 
-**Only `users` are eligible for the board.** Everyone on the roster starts on it at nothing spent, so a channel says who is being watched before anybody has sworn. Somebody the server never wrote down is still heard, still announced, and still counted under whatever Discord reports — they are simply not published, because a display name its owner can set to anything is not something to put in a channel topic. A server with no roster at all publishes nothing rather than an empty line, since setting the status to nothing would wipe whatever a person had put there.
+- **A fine is a debit.** Everybody starts at nothing and goes down. Nothing assumes that direction — `quotes` calls `credit`, so a balance can climb back toward nothing and past it.
+- **Only `users` are eligible.** Everyone on the roster starts on the board at nothing spent. Somebody not on it is still heard, announced, and counted, just not published. A server with no roster publishes nothing rather than an empty line.
+- **Counts are per server**, keyed on the user ID, so a rename does not hand somebody else's debt to whoever inherited their nickname.
+- **A restart is not an amnesty.** The tally is loaded from `CREDITS_FILE` at startup, written back on `save_seconds`, and written again on shutdown. A file that will not parse is reported and ignored.
 
-Counts are **per server**. The same person swearing in two servers owes two separate debts. Identity is the user ID and the name is only what gets printed, so a rename does not hand somebody else's debt to whoever inherited their nickname.
+<details class="why" markdown="1">
+<summary>Why four places, why a display name is not published, and how the two intervals differ</summary>
 
-The tally is kept in `CREDITS_FILE` and **loaded at startup**, so a restart is not an amnesty. It is written back on the same interval it is published on, and again on shutdown — the shutdown pass writes the file but does not touch the topic, because a channel edit waiting out a rate limit would sit on `SIGTERM` until the pod was killed outright. A file that will not parse is reported and ignored rather than raised on.
+A leaderboard rearranges itself every time somebody passes somebody else, which is the objection to publishing a whole roster in name order; at four places it is short enough to read at a glance. Ties break on the name so two people on the same balance do not swap places between one edit and the next for no reason anybody can see.
 
-What it actually sets is the channel's **status**, not its topic. A voice channel has no topic: `PATCH /channels/{id}` with one is refused with `CHANNEL_TOPIC_INVALID`, *"Field contains at least one word that is not allowed"* — which reads like a profanity filter and is nothing of the kind, since it refuses a topic of `test` identically. It needs **Set Voice Channel Status** on the channel — not Manage Channels — and without it the tool logs once per change and keeps counting.
+A display name its owner can set to anything is not something to put in a channel topic. And setting the status to nothing would wipe whatever a person had put there, which is why an empty roster publishes nothing at all.
 
-The **status is not set on every change.** Both the write and the edit are driven off a revision counter, so a tally that changed four times between two ticks costs one of each. They run on **separate intervals**, because they are limited by different things: writing a few hundred bytes is cheap, while a status edit is rate-limited. Saving still happens first on every tick, so a pod terminated mid-edit still has the tally on disk from the tick before.
+The write and the edit are both driven off a revision counter, so a tally that changed four times between ticks costs one of each. They run on separate intervals because writing a few hundred bytes is cheap while a status edit is rate-limited, and saving happens first on every tick, so a pod terminated mid-edit still has the tally on disk from the tick before. The shutdown pass writes the file but does not touch the topic — a channel edit waiting out a rate limit would sit on `SIGTERM` until the pod was killed outright.
 
-A request Discord **refuses** — a `400`, or a missing permission — is not retried, because retrying it every interval would spend the channel's rate limit on an answer that cannot change. A tally that then changes is published anyway, since what was refused was that text and the next text is not that text. Every failure is logged with the string it was trying to set.
+A request Discord refuses is not retried, since retrying every interval spends the channel's rate limit on an answer that cannot change; a tally that then changes is published anyway, the next text not being the refused text. For the record, `PATCH /channels/{id}` with a `topic` is refused `CHANNEL_TOPIC_INVALID`, *"Field contains at least one word that is not allowed"* — which reads like a profanity filter and refuses a topic of `test` identically.
+
+</details>
 
 ### tts {#tts-tool}
 
@@ -558,15 +673,22 @@ tts:
   enabled: true
 ```
 
-There is nothing to configure per server. Which synthesizer, which voice, how long a clip is kept and how much of one is held back before playback are [`settings.tts`](#settings-tts) and `TTS_HOST` / `TTS_PORT` / `TTS_VOICE`, because there is one synthesizer behind every server. All this setting says is whether **this** server is allowed to speak through it.
+There is nothing to configure per server. Which synthesizer, which voice, and how a clip is handled are [`settings.tts`](#settings-tts) and `TTS_HOST` / `TTS_PORT` / `TTS_VOICE`. All this setting says is whether **this** server is allowed to speak through it.
 
-**It is enabled separately from whatever is talking.** A server that enables `verbal-morality` and not this counts fines and says nothing; one that enables `quotes` and not this runs its rounds, pays them, and answers nobody. Both are said once at startup rather than left to be discovered by wondering why the channel is quiet.
+**It is enabled separately from whatever is talking.** A server enabling `verbal-morality` and not this counts fines and says nothing; one enabling `quotes` and not this runs its rounds, pays them, and answers nobody. Both are said once at startup.
 
-**Other tools speak through it.** `play` is the whole interface, and `play_held` is `play` for a sentence that does not exist yet — a task is handed over rather than awaited, and the hold music and the answer come out as one clip. `chime` names a WAV in `SPEECH_DIR/chimes` **without its extension**, played ahead of the words; a chime that is missing costs the chime and not the announcement.
+**Other tools speak through it.** `play` is the whole interface, and `play_held` is `play` for a sentence that does not exist yet, so hold music and the answer come out as one clip. `chime` names a WAV in `SPEECH_DIR/chimes` **without its extension**; a missing chime costs the chime and not the announcement.
 
-**How a clip reaches Discord is decided here, and it is the difference between free and not.** A phrase with nothing in front of it and nothing to be done to it is handed over exactly as it was stored — Opus packets, no decode, no encode, no resample. A chime, or any volume below the channel's own, means samples. So `quotes`, which never uses a chime and never turns itself down, takes the free path every time, and a backed-off fine with a flourish in front of it does not. The whole of that path is described under [Speech]({{ '/about/#speech' | relative_url }}).
+**Rendering in advance is its `run`.** A tool that knows at startup what it will have to say hands over the list, and this renders it in the background, one phrase at a time across the whole process. A phrase that will not synthesize is a line in the log and then the next phrase, never the end of the run.
 
-**Rendering in advance is its `run`.** A tool that can work out at startup what it will have to say hands over the list, and this renders it in the background while the bot is already in the channel, one phrase at a time across the whole process. A phrase already queued is dropped; a phrase that will not synthesize is a line in the log and then the next phrase, never the end of the run.
+<details class="why" markdown="1">
+<summary>Why one clip is free to play and another is not</summary>
+
+A phrase with nothing in front of it and nothing to be done to it is handed over exactly as it was stored — Opus packets, no decode, no encode, no resample. A chime, or any volume below the channel's own, means samples.
+
+So `quotes`, which never uses a chime and never turns itself down, takes the free path every time, and a backed-off fine with a flourish in front of it does not. The whole of that path is under [Speech]({{ '/about/#speech' | relative_url }}).
+
+</details>
 
 ### verbal-morality {#verbal-morality}
 
@@ -603,55 +725,80 @@ All three templates default to the lines above, which the tool carries, so a ser
 
 #### Words are stems
 
-Each is expanded once at startup into the endings it is said with — a plural, a past tense, a gerund with and without its `g`, someone who does it, something that is like it, and the three that make it a noun again — so `fiddlestick` also catches `fiddlesticks`, `fiddlesticked`, `fiddlesticking`, `fiddlestickin`, `fiddlesticker`, `fiddlestickers`, `fiddlesticky`, `fiddlestickity`, `fiddlestickery`, and `fiddlestickiness`. A list that has to spell out every ending is a list somebody gets around a week after writing it.
+Each word in `words` is a stem, expanded at startup into the endings it is said with, so `fiddlestick` also catches `fiddlesticks`, `fiddlesticked`, `fiddlesticking`, `fiddlestickin`, `fiddlesticker`, and half a dozen more. Matching is **whole words, case-insensitive** — a substring match fines Scunthorpe.
 
-Expansion is English spelling rather than a dictionary: a final consonant doubles after a short vowel (`shit` grows a `shitter`, not a `shiter`), a silent `e` drops before a vowel, a sibilant takes `es`, and a `y` after a consonant becomes an `i` — except before an ending that already starts with one, so it is `shittiness` and not `shittyiness`.
+Two things to check before a stem goes in the list. **Its endings can reach a word that is innocent on its own.** And a **compound** may conjugate wrong: the rules use syllable count where English uses stress, so `dipshit` correctly takes `dipshitting` only because it is named in `COMPOUND_ENDINGS` in `utils/stems.py`, which is the one line to add to.
 
-Doubling really turns on where the **stress** falls, and nothing here knows that, so the syllable count stands in for it — right for the single-syllable words this is mostly pointed at, and wrong for a **compound**, which keeps the stress of the word it ends with. `dipshit` is two syllables and still takes `dipshitting`. Nothing structural separates that from `bugger`, which splits the same way and must stay `buggering`, so the words that carry their doubling into a compound are named in `COMPOUND_ENDINGS` in `utils/stems.py`. If a list grows a compound that conjugates wrong, that is the one line to add to.
+<details class="why" markdown="1">
+<summary>Why stems rather than a word list</summary>
 
-Nothing checks whether the result is a word anybody says, and it does not need to — a form nobody utters costs a few bytes in an alternation, while a missing one costs the tool the thing it exists to catch. Note that expansion can reach a word that is innocent on its own; **a stem whose endings collide with ordinary speech is worth checking before it goes in the list.**
+A list that has to spell out every ending is a list somebody gets around a week after writing it.
 
-Matching is **whole words, case-insensitive**. A substring match fines the innocent, and the canonical example, Scunthorpe, is a place people live.
+Expansion is English spelling rather than a dictionary: a final consonant doubles after a short vowel (`shit` grows a `shitter`, not a `shiter`), a silent `e` drops before a vowel, a sibilant takes `es`, and a `y` after a consonant becomes an `i` — except before an ending that already starts with one, so it is `shittiness` and not `shittyiness`. The exact rules, and why a compound needs naming by hand, are in `utils/stems.py`.
+
+Nothing checks whether the result is a word anybody says, and it does not need to: a form nobody utters costs a few bytes in an alternation, while a missing one costs the tool the thing it exists to catch.
+
+</details>
 
 #### What a fine costs, and how loudly {#what-a-fine-costs-and-how-loudly}
 
 The settings named in this section — `repeat_seconds`, `recall_seconds`, `backoff_seconds`, `backoff_percent`, `volume_floor`, `dampen_after`, and `dampen_seconds` — are written either here, in this server's `config`, or in [`settings.fines`](#settings-fines) for every server that names none of its own. This server's wins.
 
-**The fine scales with the utterance**: one credit per forbidden word in it, so three of them is `3 credits` and one is `1 credit`. The count is filled into `{credits}` already pluralized, as a numeral — every synthesizer worth pointing this at reads `3` as a number, and `1 credits` is wrong in a way a listener hears. What a credit is *called* is [`settings.credits.currency`](#settings-credits), and the plural is grown from it by the same spelling rules the word list uses, so `penny` announces as `2 pennies`. `{violations}` agrees with the count, reading `a violation` for one and `multiple violations` for more.
+**The fine scales with the utterance**: one credit per forbidden word in it. `{credits}` is filled in already pluralized and as a numeral; what a credit is *called* is [`settings.credits.currency`](#settings-credits), pluralized by the same spelling rules the word list uses, so `penny` announces as `2 pennies`. `{violations}` reads `a violation` for one and `multiple violations` for more.
 
-What does not scale is the number of announcements. Three violations in one utterance earn one, because three announcements over the top of each other is a denial of service on the channel. **A violation earned while an announcement is playing is counted and not announced at all** — the speaker plays one clip at a time, so the alternative is a queue, and a channel where three people swear over each other would spend the next minute being read fines for things it has moved on from. The tally is charged either way: what somebody owes is not a function of whether they were told about it.
+**What does not scale is the number of announcements.** Three violations in one utterance earn one, and **a violation earned while an announcement is playing is counted and not announced at all**. The tally is charged either way.
 
-**Being fined twice in a row is worded differently.** A speaker fined again inside `repeat_seconds` gets `repeat_announcement` — "you are *also* fined" — because reading the whole sentence out again sounds like a bot that has lost track of what it just said. It is per speaker: somebody else swearing in the meantime does not make their first fine a repeat.
+**Being fined twice in a row is worded differently.** A speaker fined again inside `repeat_seconds` gets `repeat_announcement` — "you are *also* fined". It is per speaker.
 
-**A repeat offender is announced more quietly.** Being fined is the joke, and the joke told fifteen times in five minutes is a denial of service on the conversation. Every violation inside a sliding `backoff_seconds` takes `backoff_percent` off the next announcement, down to `volume_floor` — at the defaults, 5% a violation over five minutes, floored at a quarter as loud as `PLAYBACK_VOLUME`, so fifteen of them reach the bottom. The percentage is off what a listener hears rather than off the amplitude ([how a volume is read](#volumes)), so each step is one somebody can actually notice. The first swear in a window is announced at full volume: the backoff is for saying it again. The window is per speaker and per server, held in memory only. What it does **not** affect is the tally.
+**A repeat offender is announced more quietly.** Every violation inside a sliding `backoff_seconds` takes `backoff_percent` off the next announcement, down to `volume_floor` — at the defaults, 5% a violation over five minutes, floored at a quarter as loud, so fifteen reach the bottom. The percentage is off what a listener hears rather than off the amplitude ([how a volume is read](#volumes)). The first swear in a window is at full volume, and none of this affects the tally.
 
-**Past a point the sentence stops being said at all.** A speaker is read `dampen_after` fines in full inside a sliding `dampen_seconds` — an hour by default — and once that budget is spent, a **one-credit** fine is the `chime` on its own with no words behind it. It is the backoff's argument carried to its end: a quarter-volume sentence is still a whole sentence read over the top of whatever the channel was talking about, and a room that has settled into swearing already knows the wording. **This is off unless somebody asks for it**; `-1` is the default and announces every fine in full, and `0` dampens from the first one.
+**Past a point the sentence stops being said at all.** After `dampen_after` fines in full inside a sliding `dampen_seconds`, a **one-credit** fine becomes the `chime` alone. **This is off unless asked for**: `-1` is the default, and `0` dampens from the first one. A fine worth **more than one credit** is never dampened, though it does spend from the budget.
 
-What is never dampened is a fine worth **more than one credit**. Several forbidden words in one breath is a thing somebody has just done rather than the one the channel has heard all evening, and the sentence naming what it cost is the whole of the joke. It does spend from the budget, though — what the budget meters is whole sentences, whatever earned them.
+A dampened fine is still counted, still answers `recall_triggers`, and is still quietened by the backoff. **It needs a `chime`** — with none configured a dampened fine says nothing at all, which is reported at startup.
 
-Three things a dampened fine keeps. It is still **counted**, on the same terms as one that went unannounced. It can still be **asked about** — the word is the one thing a chime cannot convey, so `recall_triggers` still answers. And it is still **quietened by the backoff**, chime and all. What it needs is a `chime`: with none configured there is nothing to dampen to and a dampened fine says nothing at all, which is reported at startup rather than left to be noticed.
+**The announcements are rendered at startup**, every name in `users` against one, two, and three violations in both wordings. Anyone not on the roster pays for their first fine, and nobody pays for it again.
 
-**The announcements are rendered at startup.** The roster is known before anybody speaks and so is the shape of the sentence, so on the way up the tool hands `tts` every name in `users` against one, two, and three violations, in both wordings. Three violations because that is what a sentence usually holds; a fourth is remarkable enough to wait for the synthesizer. What cannot be warmed is anyone **not** on the roster: they pay for their first fine and nobody pays for it again.
+`chime` is resolved **inside** `SPEECH_DIR/chimes` — a bare name or a path below it; anything that climbs out is refused at startup. It must be a **16-bit WAV**, any sample rate, mono or stereo.
 
-`chime` is resolved **inside** `SPEECH_DIR/chimes` — a bare name, or a path below it; anything that climbs out is refused at startup. It must be a **16-bit WAV**, at any sample rate and in mono or stereo, both of which are converted on the way in. WAV rather than MP3 because playing audio without ffmpeg is the point of this path, and nothing in the image can decode anything else.
+A server electing in with **no `words`** is enabled and listening for nothing, which is reported at startup.
 
-A server electing in with no `words` is enabled and listening for nothing, which is reported at startup rather than left to be discovered by swearing at it.
+<details class="why" markdown="1">
+<summary>Why one announcement, why it gets quieter, and why it eventually stops</summary>
+
+Three announcements over the top of each other is a denial of service on the channel. The speaker plays one clip at a time, so the alternative to dropping is a queue, and a channel where three people swear over each other would spend the next minute being read fines for things it has moved on from. What somebody owes is not a function of whether they were told about it.
+
+Reading the whole sentence out again sounds like a bot that has lost track of what it just said, which is what the second wording is for.
+
+Being fined is the joke, and the joke told fifteen times in five minutes is a denial of service on the conversation. Dampening is that argument carried to its end: a quarter-volume sentence is still a whole sentence read over whatever the channel was talking about, and a room that has settled into swearing already knows the wording. Several forbidden words in one breath is different — a thing somebody has just done rather than the one the channel has heard all evening — and the sentence naming what it cost is the whole of the joke.
+
+Rendering stops at three violations because that is what a sentence usually holds; a fourth is remarkable enough to wait for the synthesizer. And a chime is a WAV rather than an MP3 because playing audio without ffmpeg is the point of this path, and nothing in the image can decode anything else.
+
+</details>
 
 #### Asking what it was
 
-The announcement names the fine and never the word. **Saying one of `recall_triggers` within `recall_seconds` of being fined is answered with the word**, through `recall_announcement` — ten seconds by default, and it is the whole gate. "What did I say" is a thing people say to each other, and what makes it a question for the bot is that whoever asked was fined seconds ago; outside the window, and for anybody with no fine on record, nothing is said at all.
+The announcement names the fine and never the word. **Saying one of `recall_triggers` within `recall_seconds` of being fined is answered with the word**, through `recall_announcement` — ten seconds by default, and that window is the whole gate. Outside it, and for anybody with no fine on record, nothing is said at all.
 
-The answer is **the last word of the fine that earned it**, so somebody who strung several together is told the one they finished on, and it is **the asker's own**: another speaker's word is not an answer to what you said.
+The answer is **the last word of the fine that earned it**, and it is **the asker's own**. **A fine that went unannounced can still be asked about**, the word being recorded whether or not anybody heard the fine.
 
-**A fine that went unannounced can still be asked about.** A violation earned while something else was playing is counted and not announced, which is exactly the case the question exists for, so the word is recorded whether or not anybody heard the fine.
+Three ways it parts company with the fine it is about: it carries **no chime**, it is **not quietened by the backoff**, and an utterance that both asks and offends is **fined and not answered**. Like a fine, it is dropped rather than queued while something is playing. It is also **not rendered in advance**, so the first answer naming a given word waits for the synthesizer.
 
-Three ways it parts company with the fine it is about. It carries **no chime** — a chime is for an interruption, and this answers a question the channel has just been asked. It is **not quietened by the backoff**, since the speaker most likely to need it is the one who has earned the most of one. And an utterance that both asks and offends is **fined and not answered**, because two clips over the top of each other for one sentence is the failure the single-announcement rule already exists to prevent. It is dropped rather than queued while something is playing, on the same terms as a fine.
+<details class="why" markdown="1">
+<summary>Why the window is the whole gate, and why this one is not warmed</summary>
 
-It is **not rendered in advance**, unlike everything else the tool says. What a fine can be is the roster against three counts; what an answer can be is the roster against every form of every word in the list, which for a list worth having is several hundred phrases a deployment would pay a synthesizer for on every start-up. The first answer naming a given word waits for it, and nobody waits again.
+"What did I say" is a thing people say to each other. What makes it a question for the bot is that whoever asked was fined seconds ago.
+
+No chime, because a chime is for an interruption and this answers a question the channel has just been asked. No backoff, because the speaker most likely to need it is the one who has earned the most of one. And two clips over the top of each other for one sentence is the failure the single-announcement rule exists to prevent.
+
+What a fine can be is the roster against three counts. What an answer can be is the roster against every form of every word in the list — for a list worth having, several hundred phrases a deployment would pay a synthesizer for on every start-up.
+
+</details>
 
 ## Settings
 
 The `settings:` block of `config.yaml`. Every one of these has a default, so none of them has to be written down; a name or a value that will not parse is reported at startup and falls back to the default.
+
+**Settings of the same name under different sections are unrelated.** `backoff_seconds` means one thing under [`settings.quotes`](#settings-quotes) and another under [`settings.fines`](#settings-fines), and neither reads the other. The section is part of the name.
 
 ### settings.tts {#settings-tts}
 
@@ -664,7 +811,7 @@ Only used by tools that answer out loud. Where the synthesizer *is* is `TTS_HOST
 | `lead_ms` | `500.0` | How much speech to have in hand before a clip starts playing, so a synthesizer that renders a phrase whole leaves no gap behind a chime. `0` starts on the first chunk |
 | `hold_fade_in_ms` | `500.0` | How quickly music under a wait arrives. Only the `summary` tool asks for any, and only for a channel that set `hold_music`. `0` is a cut |
 | `hold_fade_out_ms` | `2000.0` | How slowly it leaves, timed to reach silence where the first word starts. `0` is a cut |
-| `cache_retention_days` | `90` | Days anything in `SPEECH_DIR/cache` survives without being played, counted from the last time it was. Also what clears out clips an earlier version wrote as WAVs, and `.partial` files orphaned by a process killed mid-write. Any value below `1` keeps them forever. Chimes live elsewhere and are never reaped |
+| `cache_retention_days` | `90` | Days anything in `SPEECH_DIR/cache` survives without being played, counted from the last time it was. Also what clears out clips in a format nothing can read any more, and `.partial` files orphaned by a process killed mid-write. Any value below `1` keeps them forever. Chimes live elsewhere and are never reaped |
 
 ### settings.credits {#settings-credits}
 
@@ -680,7 +827,14 @@ Only used by `scoreboard`. Where the tally is written down is `CREDITS_FILE`.
 
 Only used by `verbal-morality`. What a fine is *worth* is the scoreboard's; these are how it is said.
 
-**These are the deployment's answer, and a server may write any of them in its own [`verbal-morality`](#verbal-morality) config instead**, where it wins. Two servers wanting the same numbers write them once, here; a server with a different sense of humour says so where the rest of its fines are configured. The same value written per server is **raised on** rather than defaulted past if it will not parse — a settings block is read before any server exists, while a value in a tool's config is that server electing into something, and ignoring a typo there would leave one channel wondering why it sounds like the other one.
+**These are the deployment's answer, and a server may write any of them in its own [`verbal-morality`](#verbal-morality) config instead**, where it wins.
+
+<details class="why" markdown="1">
+<summary>Why a bad value here defaults and a bad value per server raises</summary>
+
+A settings block is read before any server exists, so a value that will not parse falls back rather than stopping the pod. A value in a tool's config is that server electing into something specific, and ignoring a typo there would leave one channel wondering why it sounds like the other one.
+
+</details>
 
 | Setting | Default | Purpose |
 |---|---|---|
@@ -710,9 +864,37 @@ Where transcripts are written is `TRANSCRIPT_DIR`, and what clock they are stamp
 |---|---|---|
 | `retention_days` | `-1` | Days to keep. `-1`, or any value below `1`, keeps forever |
 | `resume_seconds` | `5.0` | How long a transcript is held open for a reconnect to the same channel. `0` seals it on disconnect |
-| `schedule` | *(unset)* | The default windows for a room listed in `monitored_channels` that names none of its own, as a list of `Wed 17:00-00:00`. **Not** what decides which rooms are kept — that is the room list itself. See [the capture schedule]({{ '/about/#the-capture-schedule' | relative_url }}) |
+| `schedule` | *(unset)* | The default windows for a room listed in `monitored_channels` that names none of its own — see [writing a window](#writing-a-window). **Not** what decides which rooms are kept; that is the room list itself |
 
-Pruning is **off by default**. Any value below `1` disables it entirely, so `0` is a no-op rather than "delete everything" and a mis-set setting cannot destroy the archive. When set to a positive `N`, files older than `N` days are deleted, aged by the **date at the front of the filename** rather than mtime — the filename is the authoritative record of when a transcript was taken, while mtime misjudges a file appended to late or restored from backup. Pruning runs at startup and whenever a session opens.
+Pruning is **off by default**, and any value below `1` disables it entirely — `0` is a no-op rather than "delete everything", so a mis-set setting cannot destroy the archive. At a positive `N`, files older than `N` days are deleted, aged by the **date at the front of the filename** rather than mtime. Pruning runs at startup and whenever a session opens.
+
+#### Writing a window {#writing-a-window}
+
+A window is written as a day and a 24-hour range, and says when a session may **start** being written down — not how long it may run for. A session that opens inside one keeps writing until everybody disconnects, however far past the end.
+
+```yaml
+schedule:
+  - Wed 17:00-00:00      # Wednesday 17:00 until midnight
+  - Fri 21:00-02:00      # Friday 21:00 until 02:00 Saturday
+```
+
+| Rule | What it means |
+|---|---|
+| An end at or before the start | Runs into the following day, which is how one line says "Friday evening" |
+| `24:00` | May be written for the end of a day |
+| An end equal to the start | The whole 24 hours |
+| The interval | Half-open — the start is included, the end is not, so `Wed 17:00-00:00` and `Thu 00:00-02:00` meet without overlapping and without leaving a minute between them |
+| Days | `Mon` through `Sun`, or written out, in any case |
+| The clock | `TZ` |
+
+**A schedule nothing could be read out of writes nothing down**, rather than falling back to something wider. An entry that cannot be read is dropped and reported at startup, and if none survive, that room keeps nothing.
+
+<details class="why" markdown="1">
+<summary>Why a typo narrows rather than widens</summary>
+
+A schedule is written by somebody narrowing what is recorded, and a typo in it must not widen it back out. An evening not written down can be had again; one that should not have been written down cannot be taken back.
+
+</details>
 
 ### settings.presence {#settings-presence}
 
@@ -735,11 +917,9 @@ Only used by `summary`. Where the endpoint *is*, what key it wants, and which mo
 
 #### On reasoning models
 
-Worth knowing before pointing this at one, because the failure is confusing and the fix is a number.
+Two traps, both with a setting for a fix.
 
-**Reasoning is generated, so it spends `max_output_tokens`.** A model that thinks before it answers puts the thinking in `reasoning_content` and the answer in `content`, and both come out of the same budget. Run out mid-thought and `content` is empty — a `200` carrying nothing, which reads like a broken endpoint and is a setting. Measured against a 27B reasoning model on a real 1,653-line session: 4,137 generated tokens, of which the answer was about 700. At `1024` it never reached the answer at all.
-
-The client says which of those happened rather than making you find out:
+**Reasoning is generated, so it spends `max_output_tokens`.** Thinking and answer come out of the same budget, and running out mid-thought leaves `content` empty — a `200` carrying nothing, which reads like a broken endpoint and is a setting. Measured against a 27B reasoning model on a real 1,653-line session: 4,137 generated tokens, of which the answer was about 700. At `1024` it never reached the answer at all. The client says so rather than making you find out:
 
 ```
 the model spent its whole 1024-token budget reasoning and never began the
@@ -747,9 +927,18 @@ answer. Raise 'settings.llm.max_output_tokens', or set
 'settings.llm.thinking: false' to stop it reasoning at all
 ```
 
-**Reasoning is also most of the wall clock**, which matters in exactly one place. The same session took 94s with reasoning and 12s without, for summaries of comparable quality. Nobody is waiting on a summary written after everyone has left. Somebody *is* waiting on the retelling — they asked out loud and the preamble covers a few seconds, not ninety — so a deployment pointing at a reasoning model will want `thinking: false`, or a model that does not reason, for the sake of that one path.
+**Reasoning is also most of the wall clock.** That same session took 94s with reasoning and 12s without, for summaries of comparable quality. Nobody waits on a summary written after everyone has left, but somebody *is* waiting on the retelling — so **a deployment pointing at a reasoning model wants `thinking: false`**, for the sake of that one path.
 
-**Thinking is stripped whichever way it arrives.** Where a model puts it is a property of the serving stack rather than of the model: beside the answer in a `reasoning_content` field, or inline at the front of `content`, fenced in `<think>` tags. The first costs nothing to ignore — only `content` is ever read. The second is cut out, in every spelling seen in the wild (`<think>`, `<thinking>`, `<reasoning>`, `<thought>`, any casing, with attributes, several blocks), because left in it opens the summary with the model talking to itself and the synthesizer reads the tags out loud. An opening tag with no closing partner is a model cut off mid-thought, so everything after it goes too. That happens **whether or not `thinking: false` is set**, because the setting is a request and not a guarantee.
+**Thinking is stripped whichever way it arrives**, whether or not `thinking: false` is set, the setting being a request rather than a guarantee.
+
+<details class="why" markdown="1">
+<summary>Where a model puts its thinking, and why all of it is cut</summary>
+
+That is a property of the serving stack rather than of the model: beside the answer in a `reasoning_content` field, or inline at the front of `content`, fenced in `<think>` tags. The first costs nothing to ignore, only `content` ever being read.
+
+The second is cut out in every spelling seen in the wild — `<think>`, `<thinking>`, `<reasoning>`, `<thought>`, any casing, with attributes, several blocks — because left in, it opens the summary with the model talking to itself and the synthesizer reads the tags out loud. An opening tag with no closing partner is a model cut off mid-thought, so everything after it goes too.
+
+</details>
 
 ### settings.summaries {#settings-summaries}
 
@@ -775,7 +964,7 @@ What a deployment points at, rather than how it behaves. `.env` is loaded if pre
 | `COMMAND_PREFIX` | `!` | Prefix for the `!join` / `!leave` commands |
 | `AUTOJOIN` | `true` | Join when a human enters a voice channel; leave when it empties. Accepts `true/false`, `1/0`, `yes/no`, `on/off` |
 
-With `AUTOJOIN` enabled the bot connects as soon as a non-bot member enters a voice channel, and disconnects once the channel empties of humans. A bot can occupy only one voice channel per guild, so if a second channel becomes active it stays where it is rather than hopping, which would fragment both transcripts. The `!join` and `!leave` commands remain available either way, and require **Message Content Intent** in the Discord Developer Portal.
+With `AUTOJOIN` enabled the bot connects as soon as a non-bot member enters a voice channel and disconnects once it empties of humans. A bot can occupy only one voice channel per guild, so a second channel becoming active does not make it hop — which would fragment both transcripts. `!join` and `!leave` remain available either way, and require **Message Content Intent** in the Discord Developer Portal.
 
 ### ASR {#env-asr}
 
@@ -802,7 +991,7 @@ Only used by tools that answer out loud. A deployment with no such tool enabled 
 
 Every volume in this bot is a knob rather than a multiplier: `1` is full, `0` is silent, and **half is half as loud to listen to**. That covers `PLAYBACK_VOLUME`, `settings.fines.volume_floor`, `settings.fines.backoff_percent`, and each channel's `hold_volume`.
 
-It is worth stating because the obvious implementation gets it wrong. Hearing is logarithmic, so a clip at half the *amplitude* is under 3 dB down and still sounds around four fifths as loud; halving what somebody actually hears takes about 10 dB. The setting is converted on that curve on its way to the samples, which is why the numbers below do what they say:
+The setting is converted on a power-law curve on its way to the samples, which is why these numbers do what they say:
 
 | Setting | Amplitude | Attenuation |
 |---|---|---|
@@ -813,7 +1002,16 @@ It is worth stating because the obvious implementation gets it wrong. Hearing is
 | `0.15` | `0.043` | −27.4 dB |
 | `0` | `0` | silence |
 
-Volumes multiply as knobs, so a tool asking for half of a deployment set to half is announced at a quarter — a quarter as loud, which is a tenth of the amplitude. Nothing has to be set in decibels, and a value from a deployment that predates this reads about as it used to at the loud end and considerably quieter below halfway.
+Volumes multiply as knobs, so a tool asking for half of a deployment set to half is announced at a quarter — a quarter as loud, which is a tenth of the amplitude. Nothing has to be set in decibels.
+
+<details class="why" markdown="1">
+<summary>Why a knob rather than a multiplier</summary>
+
+The obvious implementation gets it wrong. Hearing is logarithmic, so a clip at half the *amplitude* is under 3 dB down and still sounds around four fifths as loud; halving what somebody actually hears takes about 10 dB.
+
+A setting that scaled amplitude directly would lie: a hold-music volume of `0.15` would be 16 dB down and land at about a third of the loudness of the talking rather than a seventh, and a fine backoff of 5% a violation would move 0.45 dB, which nobody can hear until the fifth or sixth one.
+
+</details>
 
 ### Quotes {#env-quotes}
 
@@ -829,7 +1027,7 @@ Volumes multiply as knobs, so a tool asking for half of a deployment set to half
 
 ### LLM {#env-llm}
 
-Only used by `summary`. An OpenAI-compatible chat-completions endpoint and nothing more specific than that: a root, an optional bearer token, and a model name. `/chat/completions` is the whole of the API surface used, which is the part every endpoint claiming compatibility actually implements — so a hosted API, a gateway in front of one, and a model on the next machine over are the same three variables.
+Only used by `summary`. An OpenAI-compatible chat-completions endpoint and nothing more specific: a root, an optional bearer token, and a model name. `/chat/completions` is the whole of the API surface used, so a hosted API, a gateway in front of one, and a model on the next machine over are the same three variables.
 
 | Variable | Default | Purpose |
 |---|---|---|
