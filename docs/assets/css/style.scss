@@ -580,6 +580,16 @@ a.card:hover { color: inherit; }
 .terminal .k { color: var(--accent-2); }
 .terminal .s { color: var(--accent-3); }
 
+/* The caveat under the docker run block: the file it mounts has to be written first. */
+.terminal-note {
+  max-width: 68ch;
+  margin: 16px auto 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.6;
+}
+
 .cta {
   text-align: center;
   padding: 76px 0 88px;

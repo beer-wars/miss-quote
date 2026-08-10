@@ -10,11 +10,10 @@ description: A Discord bot that transcribes voice channels to per-session, per-s
   <h1>miss<span class="dash">-</span><span class="gradient">quote</span></h1>
 
   <p class="hero-tagline">
-    A Discord bot that sits in on your D&amp;D session and listens to the adventures,
-    so the evening ends up with a record instead of in everyone's half-memory of it.
-    When the bot leaves it summarizes what happened, and next time you can ask:
-    "what happened last session" and a bard recounts the night.
-    It gets up to other shenanigans too.
+    Writes down what happened in the voice channel, and then tells you about it.
+    When the bot leaves it summarizes the evening, and next time you can ask &mdash;
+    out loud &mdash; "what happened last session", and a bard recounts the night.
+    Built for a D&amp;D table. It gets up to other shenanigans too.
   </p>
 
   <div class="hero-actions">
@@ -27,8 +26,9 @@ description: A Discord bot that transcribes voice channels to per-session, per-s
     <span class="pill">Python 3.12</span>
     <span class="pill p2">discord.py 2.4+</span>
     <span class="pill p3">Wyoming ASR + TTS</span>
-    <span class="pill">Silero VAD</span>
-    <span class="pill p2">CPU-only container</span>
+    <span class="pill">OpenAI-compatible LLM</span>
+    <span class="pill p2">Silero VAD</span>
+    <span class="pill p3">CPU-only container</span>
   </div>
 </section>
 
@@ -72,6 +72,35 @@ description: A Discord bot that transcribes voice channels to per-session, per-s
 </section>
 
 <section class="section">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Cost</p>
+      <h2>The GPU is somebody else's problem</h2>
+      <p>This container needs no GPU. The Wyoming ASR and TTS servers it talks to do, and so does the endpoint behind a summary — budget for one, and let this share it. What that buys is a process cheap enough to sit in a voice channel all evening, scheduled anywhere, while the expensive hardware stays behind a socket several things can use.</p>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <span class="stat-value">~4.9 ms</span>
+        <span class="stat-label">CPU per speaker per second of audio — about 0.5% of one core</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value">~70 ms</span>
+        <span class="stat-label">Round trip for a single utterance against a GPU-backed ASR</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value">No database</span>
+        <span class="stat-label">A config file, four volumes, and outbound calls — nothing to open a port for</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value">1 process</span>
+        <span class="stat-label">One event loop, one replica, no multiprocessing layer</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section section-alt">
   <div class="wrap">
     <div class="section-head">
       <p class="eyebrow">Tools</p>
@@ -119,36 +148,6 @@ description: A Discord bot that transcribes voice channels to per-session, per-s
   </div>
 </section>
 
-<section class="section section-alt">
-  <div class="wrap">
-    <div class="section-head">
-      <p class="eyebrow">Cost</p>
-      <h2>The GPU is somebody else's problem</h2>
-      <h3>(or not)</h3>
-      <p>Transcription and synthesis are network calls, so this container carries no model weights and needs no GPU of its own. That moves the requirement rather than removing it — nothing works without a reachable ASR server — but the process that sits in a voice channel all evening is cheap, schedules anywhere, and shares the expensive hardware with whatever else wants it.</p>
-    </div>
-
-    <div class="stats">
-      <div class="stat">
-        <span class="stat-value">~4.9 ms</span>
-        <span class="stat-label">CPU per speaker per second of audio — about 0.5% of one core</span>
-      </div>
-      <div class="stat">
-        <span class="stat-value">~70 ms</span>
-        <span class="stat-label">Round trip for a single utterance against a GPU-backed ASR</span>
-      </div>
-      <div class="stat">
-        <span class="stat-value">0.85 ms</span>
-        <span class="stat-label">To play a cached three-second phrase, against a 20 ms Discord frame</span>
-      </div>
-      <div class="stat">
-        <span class="stat-value">1 process</span>
-        <span class="stat-label">One event loop, one replica, no multiprocessing layer</span>
-      </div>
-    </div>
-  </div>
-</section>
-
 <section class="section">
   <div class="wrap">
     <div class="section-head">
@@ -169,6 +168,8 @@ docker run <span class="k">-d</span> <span class="k">--name</span> miss-quote \
   <span class="k">-v</span> <span class="s">miss-quote-speech:/speech</span> \
   ghcr.io/beer-wars/miss-quote:latest</pre>
     </div>
+
+    <p class="terminal-note"><code>config.yaml</code> is not optional and is not shown here — it says which servers to join, and a server missing from it is never joined. The repository ships <a href="{{ site.github_url }}/blob/main/config.yaml">one commented in full</a> to start from.</p>
 
     <p style="text-align:center;margin-top:26px;">
       <a class="btn" href="{{ '/installation/' | relative_url }}">Full installation guide →</a>
