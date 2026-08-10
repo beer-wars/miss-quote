@@ -231,12 +231,28 @@ async def test_an_account_of_nothing_leaves_what_is_there_alone():
 
 
 async def test_a_missing_permission_is_a_failure_that_names_the_channel(caplog):
+    """Both permissions, because an embed is not message content.
+
+    A channel that has been taking accounts for months can start refusing on
+    nothing but a release, and a log line naming only Send Messages would send
+    somebody to check the one that was never missing.
+    """
     channel = Channel(CHANNEL, refuses=discord.Forbidden(_response(403), "nope"))
 
     assert not await _announcer(Guild(channel)).revise(
         ALIAS, CHANNEL, TITLE, SUMMARY, OPENED
     )
     assert "Send Messages" in caplog.text
+    assert "Embed Links" in caplog.text
+
+
+async def test_a_channel_that_cannot_be_read_says_which_permission(caplog):
+    channel = Channel(CHANNEL, unreadable=discord.Forbidden(_response(403), "nope"))
+
+    assert await _announcer(Guild(channel)).revise(
+        ALIAS, CHANNEL, TITLE, SUMMARY, OPENED
+    )
+    assert "Read Message History" in caplog.text
 
 
 async def test_a_server_error_is_a_failure():

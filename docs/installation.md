@@ -36,8 +36,11 @@ That is a statement about *where* the GPU lives, not about whether you need one.
 | Permission | Where | What it costs to omit |
 |---|---|---|
 | **Connect**, **Speak** | Each voice channel | Everything — the bot cannot join or answer |
-| **View Channel**, **Send Messages** | The text channel a summary is posted to | Summaries are written to disk and never posted |
+| **View Channel**, **Send Messages**, **Embed Links** | The text channel a summary is posted to | Summaries are written to disk and never posted |
+| **Read Message History** | The text channel a summary is posted to | A restart mid-evening posts a second account of the same evening beside the first |
 | **Set Voice Channel Status** | Each voice channel | The scoreboard keeps counting and logs once per change; the standings never reach the channel |
+
+**Embed Links** is easy to miss. An account is posted as an embed rather than as message content, and a bot allowed to talk in a channel is not thereby allowed to put an embed in it — so a channel that has been receiving summaries can start refusing them on nothing but an upgrade. The refusal names both permissions in the log for that reason.
 
 **Set Voice Channel Status** is the one worth reading twice. It is not Manage Channels, and a voice channel has no topic — what the scoreboard sets is the channel *status*, the line the client shows beneath a voice channel's name.
 
