@@ -6,8 +6,8 @@ wants to read one.
 
 **Writing it down.** When a session seals, the JSONL is reduced to a speaker-and-
 text script, handed to a model with a named prompt, filed beside the transcript
-it came from, and posted in a text channel. That is `handle_finished`, and it is
-the only tool that uses that moment: everything else here works on the utterance
+it came from, and put in a text channel. That is `handle_finished`, and it is the
+only tool that uses that moment: everything else here works on the utterance
 stream while a conversation is still going.
 
 What is written about is the **sitting** rather than the session, where a room is
@@ -21,6 +21,15 @@ and each seal rewrites that same account rather than filing another beside it.
 A session that opened outside every window is nobody's sitting and is written
 about on its own — a room put on the record by hand is a deliberate account of
 one conversation. See `summary.store.Sitting`.
+
+**The post is rewritten on every seal too**, not only the file. Four seals that
+leave one file on disk and four messages in a text channel is the same evening
+told four times, and the four are indistinguishable at a glance: each is headed
+with when the *sitting* opened, so they all carry the same date and time. So the
+account goes up once and is edited in place as the evening grows, and only an
+account that outgrows what one message holds moves — leaving a pointer where it
+was. That is `bot.announcer`'s business; this tool says which account is which,
+by handing it a header that is stable for a whole sitting.
 
 **Reading it back.** Somebody says "Miss Quote, what happened last session" and
 the bot tells them, out loud, having run the stored summary through a second
@@ -369,11 +378,13 @@ ELLIPSIS = "…"
 LINE_BREAK = "\n"
 WORD_SEPARATOR = " "
 
-# What the post says above the summary, so a channel scrolling back knows which
-# evening it is looking at.
-HEADER = "**{channel}** — {when}"
+# What the account is headed with, so a channel scrolling back knows which
+# evening it is looking at — and, because it is built from when the sitting
+# opened, what tells the announcer that a later seal is a rewrite of this evening
+# rather than a new one. No Markdown: it goes in an embed's title, which is
+# rendered as it is written.
+HEADER = "{channel} — {when}"
 HEADER_TIMESTAMP_FORMAT = "%a %d %b %Y, %H:%M %Z"
-HEADER_SEPARATOR = "\n\n"
 
 LIST_SEPARATOR = ", "
 
@@ -676,6 +687,10 @@ class Summary(Tool):
         from then on is the last thing somebody said on their way out, sitting
         in the channel looking current — for as long as a summary takes to
         write, if it were taken down at the end instead.
+
+        What the channel is left holding is one account of the evening, the same
+        way disk is. Every seal rewrites the message the last one put up rather
+        than posting beside it; see `_post` and `bot.announcer`.
         """
         monitored = self._for(transcript.source)
         if monitored is None:
@@ -783,7 +798,16 @@ class Summary(Tool):
         text: str,
         opened: datetime,
     ) -> None:
-        """Put the summary where the channel can read it, if it asked for that."""
+        """
+        Put the account where the channel can read it, if it asked for that.
+
+        Revised rather than posted, because this runs once per seal and a
+        sitting seals as many times as its room emptied. What identifies the
+        account being replaced is the header, and the header is stable across a
+        whole sitting for the same reason the filename is: both are built from
+        `opened`, which is when the sitting started and not when this session
+        did.
+        """
         if not monitored.posting:
             return
 
@@ -792,8 +816,8 @@ class Summary(Tool):
             when=opened.strftime(HEADER_TIMESTAMP_FORMAT),
         )
 
-        await self.announcer.post(
-            self.server, monitored.channel, header + HEADER_SEPARATOR + text
+        await self.announcer.revise(
+            self.server, monitored.channel, header, text, opened
         )
 
     # ── reading it back ───────────────────────────

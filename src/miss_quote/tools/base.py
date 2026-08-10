@@ -64,6 +64,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterable, Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Protocol, TypeVar, runtime_checkable
 
 from miss_quote.config import UNITY_VOLUME
@@ -144,24 +145,37 @@ class SilentTopic:
 
 @runtime_checkable
 class Announcer(Protocol):
-    """Somewhere a tool can post something worth reading later."""
+    """Somewhere a tool can keep an account of something worth reading later."""
 
-    async def post(self, server: str, channel: str, text: str) -> bool:
+    async def revise(
+        self, server: str, channel: str, title: str, text: str, since: datetime
+    ) -> bool:
         """
-        Put a body of text in one named channel, saying whether it landed.
+        Put an account in one named channel, replacing the account it had.
 
         The other half of `Topic`, and a different thing from it: a topic is one
-        line that replaces the last one, and this is a message that joins them.
-        A summary is written once and read afterwards, which is a post rather
-        than a status.
+        line under a voice channel's name that holds no history, and this is a
+        message somebody scrolls back to afterwards.
+
+        Called **once per rewrite rather than once per thing written about**, and
+        an evening is written about several times: a room empties and refills,
+        and each seal asks for an account covering more of the night than the
+        last. What has to be left behind is one account, which is why this
+        replaces rather than appends. `title` is what says which account is being
+        replaced, and a caller that wants a new one every time gives it a new
+        one every time.
+
+        `since` is how far back an implementation may look for an account it did
+        not post itself — the moment the thing being written about began, since
+        nothing older can be an account of it.
 
         The channel is named rather than identified, because the tool that asks
         holds a server alias and a channel name and nothing that could resolve
-        an ID. Whoever implements this decides what a name means.
+        an ID. Whoever implements this decides what a name means, and owns which
+        message an account lives in and what happens to it across a restart.
 
         False is worth reporting to whoever asked; nothing retries on its own,
-        since what would be sent again is a summary somebody may have already
-        read half of.
+        since the next seal will ask again with more of the evening anyway.
         """
         ...
 
@@ -249,7 +263,9 @@ class SilentAnnouncer:
     check. False, because nothing was posted.
     """
 
-    async def post(self, server: str, channel: str, text: str) -> bool:
+    async def revise(
+        self, server: str, channel: str, title: str, text: str, since: datetime
+    ) -> bool:
         logger.debug("Nowhere to post %d characters for %s.", len(text), server)
 
         return False

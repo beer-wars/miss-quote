@@ -1,31 +1,62 @@
 """
-Posting a body of text into a named text channel.
+Keeping one account of an evening in a named text channel.
 
-The other half of `tools.summary`, which knows what the text says and nothing
-about where it goes, and the counterpart to `bot.topic`: a topic is one line that
-replaces the last one under a voice channel's name, and this is a message that
-joins the ones before it in a channel somebody scrolls back through.
+The other half of `tools.summary`, which knows what an account says and nothing
+about where it goes, and the counterpart to `bot.topic` and `bot.ticker`: a topic
+is one line under a voice channel's name, a ticker holds one message and rewrites
+it as a room talks, and this holds one message per evening and rewrites it as the
+evening grows.
 
 **Channels are named rather than identified.** A tool holds a server alias and a
 channel name, so a name is what it can ask for, and a name is also what a person
 writing the config file has in front of them. The cost is that a channel renamed
-on Discord silently stops receiving posts, and that two categories may hold
+on Discord silently stops receiving accounts, and that two categories may hold
 channels of the same name — the first match wins. Both are why a name that
 resolves to nothing is a warning that says which name it was, and why the tool
 that posts checks its channel once at startup instead of at the end of the first
 session it summarizes.
 
-Discord will not take a message longer than 2000 characters, and a summary is
-occasionally longer than that, so a body is cut into pieces on the largest
-boundary it has: a blank line, then a line, then — for a wall of text with
-neither — a word. Never mid-word, because the seam between two messages is
-already visible enough.
+**An evening is written about several times.** A room on a capture schedule
+empties and refills — people leave, the bot is dragged next door, a pod restarts
+— and every one of those seals a session and asks for the account again, each
+time covering more of the night than the last. On disk that rewrites one file.
+Here it has to rewrite one message, or a channel ends an evening holding four
+accounts of it that are indistinguishable from one another at a glance.
+
+**What identifies an account is its title.** The caller makes that stable across
+a whole evening by dating it from when the sitting opened rather than from the
+seal, and two voice channels posting into one text channel differ in it. A title
+that ever stopped being stable would post a second account rather than rewrite
+the wrong one, which is the right way to be wrong.
+
+**The channel is the memory.** Which message an account lives in is held in
+memory and nowhere else, so a process that went away mid-evening would come back
+and post beside what it left. Rather than persist an ID to a file that would have
+to be kept in step with a channel somebody may have cleared, a revise that finds
+nothing held reads the channel's recent history for its own title — the same
+trade `bot.ticker` makes with the pin list. See `_adopted`.
+
+**Everything goes in an embed**, which is what makes rewriting in place work at
+all. Discord will not take more than 2000 characters of message content and does
+not extend a bot the ceiling it sells to people, but an embed description holds
+4096 and one message holds 6000 across its embeds. An evening's account is one
+message at almost any length it runs to, and one message is one edit.
+
+Past that it is more than one message, and two messages do not stay together: a
+message is sent at the bottom of the channel, so a continuation posted an hour
+after the part it continues arrives under whatever was said in between. An
+account that outgrows one message is therefore not extended — the whole of it
+goes up again as a contiguous run, and the message it started in is edited into a
+pointer at where it went. One breadcrumb where the evening began and one run
+holding the account, rather than a trail of half-accounts. See `_moved`.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 import discord
@@ -35,9 +66,20 @@ from miss_quote.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Discord's ceiling on one message. Not a setting: it is the API's number, and a
-# deployment that lowered it would only post more messages than it had to.
+# Discord's ceiling on one message's content. Not a setting: it is the API's
+# number. Nothing here sends content — that is the whole point of the embeds
+# below — but `bot.ticker` trims against it and takes it from here.
 MESSAGE_LIMIT = 2000
+
+# Discord's ceilings on embeds. Also the API's numbers. A message may carry ten
+# of them, which is a limit nothing here can reach: two descriptions already
+# exhaust the per-message budget.
+EMBED_DESCRIPTION_LIMIT = 4096
+EMBED_TOTAL_LIMIT = 6000
+
+# The bar down the left of an account, so a channel of them reads as a set of
+# things one bot files rather than as loose messages that happen to be boxed.
+ACCOUNT_COLOUR = 0x5865F2
 
 PARAGRAPH_BREAK = "\n\n"
 LINE_BREAK = "\n"
@@ -47,19 +89,48 @@ WORD_BREAK = " "
 # paused anyway and only falls back to a word when it has nothing else.
 BOUNDARIES = (PARAGRAPH_BREAK, LINE_BREAK, WORD_BREAK)
 
+# What is left where an account used to be, once it has outgrown the message it
+# started in. Its own title, so the breadcrumb still says which evening it is
+# about, and a link rather than a copy: two of anything is what this is here to
+# stop.
+MOVED = (
+    "This evening's account outgrew one message. "
+    "The whole of it is [further down]({link})."
+)
+
 # A request Discord will not accept however many times it is sent — the same
 # distinction `bot.topic` draws, and for the same reason.
 REFUSED = 400
 
 
+@dataclass
+class Account:
+    """One evening's account, as the messages currently holding it."""
+
+    # The message the account was first posted in. Never deleted while the
+    # account lives: once the account has moved, this is the only thing in the
+    # channel that says where it went, and a reader who scrolled to where they
+    # last saw it is looking straight at it.
+    origin: Any
+
+    # Every message the account occupies now, oldest first. The same list as
+    # `[origin]` until the account outgrows one message.
+    run: list[Any] = field(default_factory=list)
+
+
 class DiscordAnnouncer:
-    """Posts what a tool has written into a text channel named in its config."""
+    """Holds one message per evening and rewrites it as the evening grows."""
 
     def __init__(self, guilds: Callable[[int], Any | None]) -> None:
         # Resolved through a callable rather than the bot itself, for the same
         # reason the speaker and the topic are: this is built before the bot
         # whose guilds it looks things up in.
         self._guilds = guilds
+
+        # What is being rewritten, per server, channel, and title. Keyed on the
+        # title because that is what identifies an account: one evening in one
+        # room is one entry however many times its room emptied.
+        self._accounts: dict[tuple[str, str, str], Account] = {}
 
     def resolve(self, server: str, channel: str) -> Any | None:
         """
@@ -79,13 +150,24 @@ class DiscordAnnouncer:
 
         return discord.utils.get(getattr(guild, "text_channels", ()), name=channel)
 
-    async def post(self, server: str, channel: str, text: str) -> bool:
+    async def revise(
+        self, server: str, channel: str, title: str, text: str, since: datetime
+    ) -> bool:
         """
-        Put a body of text in one channel, saying whether all of it landed.
+        Put an evening's account in one channel, replacing the account it had.
 
-        Every piece has to land for this to be True. Half a summary in a channel
-        is worse than none, in that it reads as a whole one, so a failure partway
-        through is reported as a failure rather than as a partial success.
+        Called once per seal rather than once per evening, each time with more
+        of the night than the last, and what it has to leave behind is one
+        account either way.
+
+        `since` bounds the search for an account this process did not post
+        itself. Nothing older than the evening can be this evening's account, so
+        the moment the sitting opened is as far back as the channel is read.
+
+        Every piece has to land for this to be True. Half an account in a
+        channel is worse than none, in that it reads as a whole one, so a failure
+        partway through is reported as a failure rather than as a partial
+        success.
         """
         target = self.resolve(server, channel)
         if target is None:
@@ -97,61 +179,417 @@ class DiscordAnnouncer:
             )
             return False
 
-        for piece in split(text):
-            if not await self._send(target, piece, server):
-                return False
+        key = (server, channel, title)
+        pages = paged(text, title)
 
-        logger.info(
-            "Posted %d characters for %s to '#%s'.", len(text), server, channel
-        )
+        # An account of nothing is not an account, and an embed with no
+        # description is a box Discord will refuse. Nothing said is nothing to
+        # replace what is there with.
+        if not pages:
+            logger.warning(
+                "Nothing to put in '%s' for %s; what is there was left alone.",
+                channel,
+                server,
+            )
+            return False
+
+        held = self._accounts.get(key)
+
+        if held is None:
+            held = await self._adopted(server, channel, target, title, since)
+            if held is not None:
+                self._accounts[key] = held
+
+        if held is None:
+            return await self._posted(server, channel, target, key, pages)
+
+        # One message holding one message's worth is the only shape that can be
+        # rewritten where it stands. Anything else moves; see `_moved`.
+        if len(pages) == 1 and len(held.run) == 1:
+            return await self._rewritten(server, channel, target, key, held, pages[0])
+
+        return await self._moved(server, channel, target, key, held, pages)
+
+    async def _posted(
+        self,
+        server: str,
+        channel: str,
+        target: Any,
+        key: tuple[str, str, str],
+        pages: list[list[discord.Embed]],
+    ) -> bool:
+        """Put an account the channel does not have yet up, and hold on to it."""
+        run = await self._run(server, channel, target, pages)
+        if run is None:
+            return False
+
+        self._accounts[key] = Account(origin=run[0], run=run)
+        logger.info("Posted an account for %s to '#%s'.", server, channel)
 
         return True
 
-    @staticmethod
-    async def _send(channel: Any, text: str, server: str) -> bool:
+    async def _rewritten(
+        self,
+        server: str,
+        channel: str,
+        target: Any,
+        key: tuple[str, str, str],
+        held: Account,
+        page: list[discord.Embed],
+    ) -> bool:
         """
-        One message, saying whether it landed.
+        Rewrite the message the account is already in, leaving it where it is.
 
-        False for every failure, unlike `Topic.publish`, because the two answer
-        different questions: a topic is asked again on the next tick and wants to
-        know whether to bother, while a summary is posted once and its caller
-        only wants to know whether it got there. The distinction between a
-        refusal and a failure survives as the level it is logged at — a missing
-        permission is a deployment to go and fix, and a 500 is Discord having a
-        moment.
+        The ordinary case, and the one the whole design is for: an evening that
+        emptied and refilled four times leaves the message it started in, saying
+        more each time.
+
+        A message that has gone — deleted by somebody tidying the channel —
+        drops the account and is posted again. Somebody who deleted it has not
+        asked for the evening to go unrecorded.
         """
+        message = held.run[0]
+
         try:
-            await channel.send(text)
+            await message.edit(embeds=page)
+        except discord.NotFound:
+            logger.info(
+                "The message holding %s's account in '%s' is gone; posting another.",
+                server,
+                channel,
+            )
+            self._accounts.pop(key, None)
+
+            return await self._posted(server, channel, target, key, [page])
         except discord.Forbidden:
             logger.warning(
-                "Not allowed to post in '%s'; %s will not get its summaries there. "
-                "The bot needs Send Messages on the channel.",
+                "Not allowed to edit in '%s'; %s will not get its accounts there. "
+                "Editing its own message takes no permission of its own, so what "
+                "has gone is the bot's access to the channel.",
                 channel,
                 server,
             )
             return False
         except discord.HTTPException as exc:
             if exc.status == REFUSED:
-                logger.error("Discord will not take a message for '%s': %s", channel, exc)
+                logger.error("Discord will not take an account for '%s': %s", channel, exc)
                 return False
 
-            logger.warning("Could not post to '%s': %s", channel, exc)
+            logger.warning("Could not rewrite the account in '%s': %s", channel, exc)
             return False
         except (OSError, asyncio.TimeoutError) as exc:
-            logger.warning("Could not reach Discord to post to '%s': %s", channel, exc)
+            logger.warning(
+                "Could not reach Discord to rewrite the account in '%s': %s", channel, exc
+            )
             return False
 
+        logger.info("Rewrote %s's account in '#%s'.", server, channel)
+
         return True
+
+    async def _moved(
+        self,
+        server: str,
+        channel: str,
+        target: Any,
+        key: tuple[str, str, str],
+        held: Account,
+        pages: list[list[discord.Embed]],
+    ) -> bool:
+        """
+        Post the account again as one run, and point the old message at it.
+
+        For an account that no longer fits where it was. Extending it in place
+        is not on offer — the extra message would be sent at the bottom of the
+        channel, an unknown distance below the part it continues, and two halves
+        of one account with other people's conversation between them read as two
+        fragments.
+
+        The order matters. The run goes up first, so a failure anywhere in it
+        leaves the account exactly where it was rather than pointing at
+        something that was never posted. Only once the whole run has landed does
+        the original become a pointer and the messages it superseded come down.
+
+        What the original becomes is a pointer rather than a copy, and it is the
+        original every time rather than the last one: an evening that keeps
+        outgrowing its message leaves one breadcrumb where it began and one run
+        at the bottom, not a chain of them.
+        """
+        run = await self._run(server, channel, target, pages)
+        if run is None:
+            return False
+
+        await self._pointed(server, channel, held.origin, run[0])
+        await self._superseded(server, channel, held)
+
+        self._accounts[key] = Account(origin=held.origin, run=run)
+        logger.info(
+            "%s's account outgrew its message in '#%s'; moved it and left a pointer.",
+            server,
+            channel,
+        )
+
+        return True
+
+    async def _pointed(
+        self, server: str, channel: str, origin: Any, head: Any
+    ) -> None:
+        """
+        Turn the message an account started in into a link to where it went.
+
+        Never fatal. The account is up and readable, which is what was asked
+        for; a stale copy of an earlier draft above it is untidy and is not
+        worth reporting a failure over, since nothing is going to retry.
+
+        The title is kept, so the breadcrumb still says which evening it is
+        about — and so that a revise after a restart, reading the channel for
+        its own title, finds the run rather than the pointer: the run is newer,
+        and the newest match is what it takes.
+        """
+        title = origin.embeds[0].title if origin.embeds else None
+
+        try:
+            await origin.edit(
+                embeds=[
+                    discord.Embed(
+                        title=title,
+                        description=MOVED.format(link=head.jump_url),
+                        colour=ACCOUNT_COLOUR,
+                    )
+                ]
+            )
+        except (discord.HTTPException, OSError, asyncio.TimeoutError) as exc:
+            logger.warning(
+                "Could not point %s's old account in '%s' at where it went: %s",
+                server,
+                channel,
+                exc,
+            )
+
+    async def _superseded(self, server: str, channel: str, held: Account) -> None:
+        """
+        Take down what the account used to occupy, apart from where it began.
+
+        The origin stays and has just become the pointer. Everything else is a
+        part of an account that has been posted again in full, and leaving it up
+        is the duplication this exists to stop.
+        """
+        await self._taken(
+            server,
+            channel,
+            [message for message in held.run if message.id != held.origin.id],
+        )
+
+    async def _adopted(
+        self, server: str, channel: str, target: Any, title: str, since: datetime
+    ) -> Account | None:
+        """
+        The account this evening already has in the channel, if this is not the
+        process that posted it.
+
+        What that is, is an evening a pod restart landed in the middle of: the
+        message is held in memory, so nothing came back for it, and the next
+        seal would post a second account of the same night beside the first.
+
+        The **newest** message carrying the title, because an account that has
+        already moved once left an older message carrying the same title
+        pointing at it. Newest is always the live one; see `_pointed`.
+
+        Messages newer than it and contiguous with it are the rest of the run —
+        the bot's own, untitled, and unbroken by anybody else's message, which
+        is what a run posted in one go looks like from the outside. Anything
+        else ends it, because a gap means the messages are no longer one thing
+        a reader would read straight through.
+
+        What is adopted as the origin is the message the account is in **now**
+        rather than the one it started in, which the channel no longer says.
+        The consequence is a chain: an account that had already moved before the
+        restart and moves again after it leaves a pointer at a pointer. Two hops
+        rather than one, only after a restart, and every link still leads to the
+        account — which is a better trade than reading a channel's whole history
+        to find where an evening began.
+
+        Never fatal, and nothing is adopted from a channel that will not answer:
+        posting a second account is worse than the alternative in a tidy channel
+        and much better than a summary that goes nowhere.
+        """
+        me = getattr(getattr(target, "guild", None), "me", None)
+        if me is None:
+            return None
+
+        newer: list[Any] = []
+
+        try:
+            async for message in target.history(after=since, oldest_first=False):
+                if _titled(message, me, title):
+                    logger.info(
+                        "Found an account %s left in '#%s' before a restart; "
+                        "rewriting it rather than posting another.",
+                        server,
+                        channel,
+                    )
+
+                    return Account(origin=message, run=[message, *reversed(newer)])
+
+                if _continues(message, me):
+                    newer.append(message)
+                else:
+                    newer.clear()
+        except (discord.HTTPException, OSError, asyncio.TimeoutError) as exc:
+            logger.warning(
+                "Could not read what %s already has in '%s': %s", server, channel, exc
+            )
+
+        return None
+
+    async def _run(
+        self,
+        server: str,
+        channel: str,
+        target: Any,
+        pages: list[list[discord.Embed]],
+    ) -> list[Any] | None:
+        """
+        One account as the contiguous run of messages holding it, or nothing.
+
+        All of it or none of it. A run that broke partway through is a channel
+        holding the first half of an evening under a heading that says it is the
+        whole of it, so what landed comes back down and the caller is told the
+        account did not go up — it has one on disk either way, and the next seal
+        will ask again with more of the night in it.
+        """
+        run: list[Any] = []
+
+        for page in pages:
+            posted = await self._sent(target, page, server, channel)
+            if posted is not None:
+                run.append(posted)
+                continue
+
+            await self._taken(server, channel, run)
+
+            return None
+
+        return run
+
+    @staticmethod
+    async def _taken(server: str, channel: str, run: list[Any]) -> None:
+        """
+        Take a run of messages down, saying nothing about how it went.
+
+        Everything that calls this has already decided what to tell the caller,
+        and a message that will not come down is untidy rather than wrong.
+        """
+        for message in run:
+            try:
+                await message.delete()
+            except discord.NotFound:
+                continue
+            except (discord.HTTPException, OSError, asyncio.TimeoutError) as exc:
+                logger.warning(
+                    "Could not take part of %s's account out of '%s': %s",
+                    server,
+                    channel,
+                    exc,
+                )
+
+    @staticmethod
+    async def _sent(
+        channel: Any, embeds: list[discord.Embed], server: str, name: str
+    ) -> Any | None:
+        """
+        One message, or nothing where it did not land.
+
+        The message itself rather than a flag, because everything after the
+        first post is an edit of something and the handle is what makes that
+        possible. The distinction between a refusal and a failure survives as
+        the level it is logged at — a missing permission is a deployment to go
+        and fix, and a 500 is Discord having a moment.
+        """
+        try:
+            return await channel.send(embeds=embeds)
+        except discord.Forbidden:
+            logger.warning(
+                "Not allowed to post in '%s'; %s will not get its accounts there. "
+                "The bot needs Send Messages on the channel.",
+                name,
+                server,
+            )
+        except discord.HTTPException as exc:
+            if exc.status == REFUSED:
+                logger.error("Discord will not take a message for '%s': %s", name, exc)
+            else:
+                logger.warning("Could not post to '%s': %s", name, exc)
+        except (OSError, asyncio.TimeoutError) as exc:
+            logger.warning("Could not reach Discord to post to '%s': %s", name, exc)
+
+        return None
+
+
+def paged(text: str, title: str) -> list[list[discord.Embed]]:
+    """
+    One account as the messages it has to be sent in, each as its embeds.
+
+    Cut twice, at the two ceilings Discord has: a message carries 6000
+    characters across its embeds and one description holds 4096, so an account
+    is cut into messages first and each message into descriptions after. Both
+    cuts go through `split`, so both land on the largest boundary they have and
+    an account breaks between paragraphs wherever it can.
+
+    The title is charged against every message rather than only the one carrying
+    it. It costs a continuation message a few dozen characters it could have
+    had, and it is one budget rather than two that have to agree.
+
+    Only the first embed of the first message is titled. That is what identifies
+    the account in a channel, and a continuation repeating it would be a second
+    thing answering to the evening's name.
+    """
+    bodies = split(text, EMBED_TOTAL_LIMIT - len(title))
+
+    return [
+        _embeds(body, title if index == 0 else None)
+        for index, body in enumerate(bodies)
+    ]
+
+
+def _embeds(body: str, title: str | None) -> list[discord.Embed]:
+    """One message's worth of an account, as the embeds carrying it."""
+    return [
+        discord.Embed(
+            title=title if index == 0 else None,
+            description=piece,
+            colour=ACCOUNT_COLOUR,
+        )
+        for index, piece in enumerate(split(body, EMBED_DESCRIPTION_LIMIT))
+    ]
+
+
+def _titled(message: Any, me: Any, title: str) -> bool:
+    """Whether this is the head of an account of the evening `title` names."""
+    return (
+        message.author.id == me.id
+        and bool(message.embeds)
+        and message.embeds[0].title == title
+    )
+
+
+def _continues(message: Any, me: Any) -> bool:
+    """Whether this could be the rest of a run rather than the start of one."""
+    return (
+        message.author.id == me.id
+        and bool(message.embeds)
+        and message.embeds[0].title is None
+    )
 
 
 def split(text: str, limit: int = MESSAGE_LIMIT) -> list[str]:
     """
-    One body as the messages it has to be sent in.
+    One body as the pieces it has to be cut into.
 
-    Cut at the largest boundary that falls inside the limit, so a summary breaks
-    between paragraphs wherever it can and between words at worst. A run of text
-    longer than the limit with no boundary in it at all — which is not something
-    prose does — is cut at the limit rather than left to be refused.
+    Cut at the largest boundary that falls inside the limit, so an account
+    breaks between paragraphs wherever it can and between words at worst. A run
+    of text longer than the limit with no boundary in it at all — which is not
+    something prose does — is cut at the limit rather than left to be refused.
     """
     remaining = text.strip()
     if len(remaining) <= limit:
