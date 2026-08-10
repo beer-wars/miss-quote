@@ -10,11 +10,12 @@ transcript is worth reading while the room is talking and is clutter by morning,
 so this pins it while it lives and deletes it when the room empties.
 
 That difference is why the two draw opposite conclusions from the same limits.
-An account is long, rewritten a handful of times a night, and goes in an embed so
-that it stays one message. This is short by construction — `transcript_lines`
-of them, each cut to `TRANSCRIPT_LINE_LIMIT` — and rewritten every couple of
-seconds, so it stays message content: at that cadence what an embed would buy in
-ceiling it would spend in repainting a container nobody asked to have redrawn.
+An account is long and rewritten a handful of times a night, so it goes in embeds
+and buys the room to stay one message at almost any length an evening runs to.
+This is short by construction — at most `transcript_lines` of them, each cut to
+`TRANSCRIPT_LINE_LIMIT` — and rewritten every couple of seconds, so it stays
+message content: at that cadence what an embed would buy in ceiling it would
+spend in repainting a container nobody asked to have redrawn.
 
 **The message is pinned while it is live**, which is what makes it reachable
 while a room is talking rather than something to scroll for. Deleting it unpins
@@ -29,10 +30,12 @@ next post reads the channel's pins and takes down whatever this bot left there.
 Fifty pins is a ceiling a slow leak would eventually reach; a leak that is swept
 on the way past never gets there. See `_swept`.
 
-This bot pins one other thing: `bot.announcer` pins the head of every account it
-files, in the same channel. `_swept` tells them apart by their embeds — an
-account has them and a feed does not — rather than by anything it has to
-remember across a restart.
+This bot pins one other thing, and the two spend from the same fifty:
+`bot.announcer` pins the head of every account it files, in this same channel,
+and ages the older ones off the list under its own `pinned_sessions`. `_swept`
+tells them apart by their embeds — an account has them and a feed does not —
+rather than by anything either has to remember about the other across a
+restart.
 
 **Only the pin needs a permission.** Posting needs Send Messages, and everything
 after it is the bot's own message — editing one and deleting one are ungoverned,
