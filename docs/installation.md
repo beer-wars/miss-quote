@@ -10,17 +10,17 @@ description: Prerequisites, Discord application setup, running miss-quote under 
 
 miss-quote is a client. It does not transcribe, synthesize, or summarize anything itself — it points at services that do, and there is **no default that will work out of the box** for any of them.
 
+**To try it tonight you need three things**: a Discord bot token, a reachable Wyoming ASR server, and somewhere to run a container. The other two rows below are per tool.
+
 | Requirement | Why | Needed when |
 |---|---|---|
 | **A Discord bot application** and its token | The thing that joins the channel | Always |
 | **A reachable Wyoming ASR server** | Transcription, one connection per utterance | Always |
 | A container runtime, or Python 3.12 | It ships as an image | Always |
-| **A reachable Wyoming TTS server** | Anything said out loud | Any server enabling the `tts` tool |
+| **A reachable Wyoming TTS server** | Anything said out loud | Any server enabling `tts` |
 | **An OpenAI-compatible chat endpoint** | Summaries and retellings | Any server enabling `summary` |
 
-**This pod** needs no GPU and no node constraints — transcription and synthesis are network calls, and the only model it runs itself is Silero VAD, under `onnxruntime` on the CPU, vendored in the image.
-
-That is a statement about *where* the GPU lives, not about whether you need one. The three services above are the ones that do the expensive work, and a Wyoming ASR fast enough to keep up with a conversation is a GPU workload wherever you put it. Budget for it; just budget for it once, on a host several things can share, rather than pinning this bot to it.
+**This pod** needs no GPU and no node constraints — transcription and synthesis are network calls, and the only model it runs itself is Silero VAD, on the CPU under `onnxruntime`, vendored in the image. The services above are the ones doing the expensive work, and a Wyoming ASR fast enough to keep up with a conversation is a GPU workload wherever you put it. **Budget for one — just budget for it once**, on a host several things can share.
 
 **A single replica.** Two instances would double-join the voice channel and double-write the transcript.
 
@@ -33,19 +33,19 @@ That is a statement about *where* the GPU lives, not about whether you need one.
 
 ### Permissions
 
-| Permission | Where | What it costs to omit |
-|---|---|---|
-| **Connect**, **Speak** | Each voice channel | Everything — the bot cannot join or answer |
-| **View Channel**, **Send Messages**, **Embed Links** | The text channel a summary is posted to | Summaries are written to disk and never posted |
-| **Read Message History** | The text channel a summary is posted to | A restart mid-evening posts a second account of the same evening beside the first |
-| **Pin Messages** | The text channel a summary is posted to | Summaries are posted but not pinned, so an evening has to be scrolled for |
-| **Set Voice Channel Status** | Each voice channel | The scoreboard keeps counting and logs once per change; the standings never reach the channel |
+| Permission | Needed for | Where | What it costs to omit |
+|---|---|---|---|
+| **Connect**, **Speak** | Everything | Each voice channel | The bot cannot join or answer |
+| **View Channel**, **Send Messages**, **Embed Links** | `summary` | The text channel it posts to | Summaries are written to disk and never posted |
+| **Read Message History** | `summary` | The text channel it posts to | A restart mid-evening posts a second account of the same evening beside the first |
+| **Pin Messages** | `summary` | The text channel it posts to | Summaries are posted but not pinned, so an evening has to be scrolled for |
+| **Set Voice Channel Status** | `scoreboard` | Each voice channel | The tally keeps counting and logs once per change; the standings never reach the channel |
 
-**Pin Messages** is its own permission and **Manage Messages does not carry it** — Discord split the two apart, so a bot trusted to delete anyone's message in a channel can still be refused a pin on its own.
+Three of those are easy to get wrong:
 
-**Embed Links** is easy to miss. An account is posted as an embed rather than as message content, and a bot allowed to talk in a channel is not thereby allowed to put an embed in it — so a channel that has been receiving summaries can start refusing them on nothing but an upgrade. The refusal names both permissions in the log for that reason.
-
-**Set Voice Channel Status** is the one worth reading twice. It is not Manage Channels, and a voice channel has no topic — what the scoreboard sets is the channel *status*, the line the client shows beneath a voice channel's name.
+- **Pin Messages is its own permission, and Manage Messages does not carry it.** Discord split the two apart, so a bot trusted to delete anyone's message in a channel can still be refused a pin.
+- **Embed Links is easy to miss.** An account is posted as an embed rather than as message content, and a bot allowed to talk in a channel is not thereby allowed to put an embed in it. The refusal names both permissions in the log.
+- **Set Voice Channel Status is not Manage Channels.** A voice channel has no topic; what the scoreboard sets is the channel *status*, the line shown beneath its name.
 
 ## Running it
 
@@ -170,15 +170,13 @@ Four directories, and what each costs to leave out:
 | Summaries | `/summaries` | `summary` is enabled | The archive is lost; each summary is still posted to its channel when written |
 | Credits | `/credits` | `scoreboard` is enabled | The tally is forgiven at every restart |
 
-**`SPEECH_DIR` is load-bearing, not an optimisation.** Without a writable volume there, every announcement is a round trip to the TTS server instead of a file read.
+**`SPEECH_DIR` is load-bearing, not an optimisation** — it is reported as an error at startup rather than a warning. It holds two subdirectories with different owners: `cache/` is rendered speech, written and reaped by the bot, and `chimes/` is where **you** put 16-bit WAVs by hand. Nothing writes to or reaps `chimes/`, so a clip put there deliberately is never on a retention clock meant for a phrase said once.
 
 Use a shared (`ReadWriteMany`) volume for the transcripts if anything else will need to read them; a single-writer volume locks them to this pod and forces an export step later.
 
-`SPEECH_DIR` holds two subdirectories with different owners: `cache/` is rendered speech, written and reaped by the bot, and `chimes/` is where **you** put 16-bit WAVs by hand. Nothing writes to or reaps `chimes/`, so a clip put there deliberately is never on a retention clock meant for a phrase said once.
-
 ## Environment
 
-Everything a deployment *points at* is an environment variable; everything about how it *behaves* is `config.yaml`. The minimum is a token, an ASR host, and a config file with at least one server in it.
+Everything a deployment *points at* is an environment variable; everything about how it *behaves* is [`config.yaml`](https://github.com/beer-wars/miss-quote/blob/main/config.yaml), which the repository ships commented in full. The minimum is a token, an ASR host, and a config file with at least one server in it.
 
 ```bash
 DISCORD_TOKEN=...          # Required — the bot exits immediately without it
@@ -205,7 +203,41 @@ print(asyncio.run(transcribe(pcm)))
 
 A correct setup prints `That should work.` in well under a second.
 
-On startup the bot reconciles the config file against the servers it is actually in and says so. Four things can be wrong and none of them raise: an entry would not parse, nothing is configured, a server is configured but the bot was never invited, or the bot is in a server nobody configured. **Read the startup log** — every misconfiguration this project can detect is reported there rather than left to be discovered by noticing an empty directory.
+### Reading the startup log {#reading-the-startup-log}
+
+Every misconfiguration this project can detect is reported on the way up rather than left to be discovered by noticing an empty directory. **Nothing here raises** — the bot starts anyway, with one fewer server or one fewer tool.
+
+A healthy start says which servers it knows, which rooms are on the record, and which tools are built:
+
+```
+21:14:03 │ miss_quote.bot.client │ INFO    │ Logged in as miss-quote#4127 (ID: 1234567890)
+21:14:03 │ miss_quote.bot.client │ INFO    │ Known servers: first-server (joined)
+21:14:03 │ miss_quote.bot.client │ INFO    │ Keeping first-server/general-voice for sessions opening during: Wed 17:00-00:00.
+21:14:03 │ miss_quote.bot.client │ INFO    │ Tools enabled: first-server: quotes, scoreboard, summary, tts
+```
+
+The lines worth looking for are the ones that say something is not going to happen:
+
+```
+21:14:03 │ miss_quote.bot.client │ WARNING │ No voice channel is listed in any server's 'monitored_channels', so nothing will be written down. List the rooms that should be.
+21:14:03 │ miss_quote.bot.client │ WARNING │ Configured but not joined: second-server. The bot needs an invite to each.
+21:14:03 │ miss_quote.bot.client │ ERROR   │ Nothing in the schedule for first-server/side-room could be read, so it will not be written down. Correct it, or remove it to keep every session in that room.
+```
+
+## When it doesn't work
+
+| Symptom | Most likely cause |
+|---|---|
+| The bot never joins a channel | The server is not in `servers`, which is [a hard gate]({{ '/configuration/#servers' | relative_url }}). An unlisted server is never joined, by autojoin or by `!join` |
+| It joins, but no transcript file appears | The channel is not in a `summary` tool's [`monitored_channels`]({{ '/configuration/#which-channels' | relative_url }}), or that tool is not enabled for the server. **That mapping is the switch for writing to disk** — it is the most common cause of this |
+| A transcript appears, but only some evenings | A [`schedule`]({{ '/configuration/#writing-a-window' | relative_url }}) covers the room and the session opened outside a window. A window says when a session may *start*; one opened a minute early is off the record for its whole length |
+| Nothing is said out loud | The server has not enabled the [`tts`]({{ '/configuration/#tts-tool' | relative_url }}) tool. Every other tool speaks through it, and the log says so once at startup |
+| Summaries are written but never posted | No `channel:` on that room, an unresolvable channel name, or missing **Embed Links** on it |
+| Summaries are posted but not pinned | Missing **Pin Messages**, which Manage Messages does not carry |
+| The standings never reach the voice channel | Missing **Set Voice Channel Status**, which is not Manage Channels |
+| A summary is empty or never arrives | A reasoning model spending its whole budget before the answer — see [on reasoning models]({{ '/configuration/#on-reasoning-models' | relative_url }}) |
+| Every phrase is slow, every time | No writable volume at `SPEECH_DIR`, so nothing is cached. Reported as an error at startup |
+| `!join` and the transcribe commands do nothing | **Message Content Intent** is off in the Developer Portal |
 
 ## Development
 
@@ -253,12 +285,6 @@ GitHub Actions builds the image and pushes it to GHCR for the repository it runs
 ```bash
 git tag v0.1.0 && git push origin v0.1.0
 ```
-
-## Upgrading
-
-> **From `TTS_CACHE_DIR`.** One directory used to hold both rendered speech and the clips an operator put there by hand; it is now `SPEECH_DIR` with a subdirectory for each. Point the volume at `/speech` and the cache rebuilds itself on the usual terms — nothing is lost but the first synthesis of each phrase, and `prewarm` pays most of that before anyone is waiting. **A chime has to be moved by hand** into `SPEECH_DIR/chimes`, because nothing reads the old path any more; one left behind is reported at startup as missing rather than guessed at. The old directory is not read, not migrated, and not deleted — it is yours to remove once you are satisfied.
-
-> **To the `tts` tool.** Playing audio used to be something every tool could do; it is now one tool, and **a server that does not enable `tts` says nothing.** Add `tts: {enabled: true}` beside whatever already speaks. Fines are still counted and rounds are still paid without it, and the log says so once at startup, so a server that goes quiet after an upgrade has a line explaining why. **A `chime:` setting also loses its extension** — `chime.wav` becomes `chime` — and one left as it was is called out by name rather than reported as a file that is not there. Clips written by a version older still are `.wav` and cannot be read at all; anything left in the new cache directory ages out on the retention clock whatever it is named.
 
 <nav class="page-nav" aria-label="Previous and next page">
   <a class="page-nav-prev" rel="prev" href="{{ '/about/' | relative_url }}"><span class="page-nav-label">← Previous</span><strong>About</strong><span class="page-nav-blurb">How the pipeline is put together</span></a>

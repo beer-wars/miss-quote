@@ -14,16 +14,17 @@
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue?style=for-the-badge&logo=python&logoColor=white)
 ![Discord.py](https://img.shields.io/badge/Discord.py-2.4%2B-5865F2?style=for-the-badge&logo=discord&logoColor=white)
-![Wyoming](https://img.shields.io/badge/Wyoming-ASR-success?style=for-the-badge)
+![Wyoming](https://img.shields.io/badge/Wyoming-ASR%20%2B%20TTS-success?style=for-the-badge)
+![LLM](https://img.shields.io/badge/LLM-OpenAI--compatible-8a63d2?style=for-the-badge)
 ![Silero VAD](https://img.shields.io/badge/Silero%20VAD-ONNX-orange?style=for-the-badge)
 
 **miss-quote** is a Discord bot that sits in on your D&D session and listens to the adventures, so the evening ends up with a record instead of in everyone's half-memory of it. When the bot leaves it summarizes what happened, and next time you can ask: "what happened last session" and a bard recounts the night. It gets up to other shenanigans too.
 
 Walk into a film line and it says the line out loud, then asks the room where it came from and pays whoever gets it first. Swear and it fines you, out loud, *Demolition Man* style. It keeps a running tally of who owes what and publishes the standings under the voice channel's name.
 
-Transcription is delegated to a [Wyoming](https://github.com/rhasspy/wyoming) ASR server rather than run in-process, so **this container** is a CPU-only workload with no model weights and no cache volume for them. That moves the GPU rather than removing it: the bot does nothing at all without a reachable ASR server, and in practice that server wants one. What it buys is a bot that schedules anywhere and a GPU that several things can share.
+**This container needs no GPU.** Transcription and synthesis are calls to [Wyoming](https://github.com/rhasspy/wyoming) servers, and summaries are a call to any OpenAI-compatible endpoint — those are what want the hardware. Budget for one, and let this share it. The [About page](https://miss-quote.wars.beer/about/) has the shape of the pipeline.
 
-It is a hard fork of [Leehyunbin0131/Discord-Realtime-STT-Bot](https://github.com/Leehyunbin0131/Discord-Realtime-STT-Bot), which ran `faster-whisper` on a local GPU.
+It began as a hard fork of [Leehyunbin0131/Discord-Realtime-STT-Bot](https://github.com/Leehyunbin0131/Discord-Realtime-STT-Bot), which ran `faster-whisper` on a local GPU.
 
 ## Made with vibes, not love
 
