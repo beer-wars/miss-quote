@@ -28,7 +28,7 @@ It began as a hard fork of [Leehyunbin0131/Discord-Realtime-STT-Bot](https://git
 
 ## Made with vibes, not love
 
-This whole bot was vibecoded, and it doesn't deserve more attention than that. What it provides isn't worth proper effort. It was written as a joke, out of pure laziness. It somehow does its job anyway. Anyone is welcome to use it. It comes with as much guarantee as the effort which went into it: none.
+This whole this was vibecoded, and it really doesn't deserve more than that. What it provides isn't worth proper effort. It was written as a joke out of pure laziness, and yet somehow manages to do its job anyway. Anyone is welcome to use it, but it comes with as much guarantee as effort that went into it: none.
 
 ---
 
