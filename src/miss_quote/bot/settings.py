@@ -37,7 +37,7 @@ TRANSCRIBING = "transcribing"
 ON = "on"
 OFF = "off"
 
-# What separates a tool from one of its own settings: `quotes.backoff_seconds`.
+# What separates a tool from one of its own settings: `quotes.backoff`.
 # Split once from the left, since a tool name may carry a dash but never a dot.
 PATH_SEPARATOR = "."
 
@@ -65,7 +65,7 @@ def parse_path(text: str) -> tuple[str, str | None]:
     """
     What somebody named, as a target and possibly one of its settings.
 
-    `quotes` is the tool; `quotes.backoff_seconds` is one thing about it. A
+    `quotes` is the tool; `quotes.backoff` is one thing about it. A
     trailing dot names no setting rather than an empty one, which is what makes
     `quotes.` the same request as `quotes` instead of a lookup that cannot
     match.

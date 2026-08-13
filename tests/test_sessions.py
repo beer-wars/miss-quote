@@ -12,6 +12,7 @@ from miss_quote.tools.base import Tool
 from miss_quote.tools.runner import ToolRunner
 from miss_quote.transcript.schedule import ALWAYS
 from miss_quote.transcript.writer import TranscriptWriter
+from miss_quote.utils import duration
 
 SERVER = 123456789012345678
 ALIAS = "first-server"
@@ -19,7 +20,7 @@ CHANNEL_ID = 5150
 OTHER_CHANNEL_ID = 5151
 
 TIMEZONE = "America/Los_Angeles"
-KEEP_FOREVER = -1
+KEEP_FOREVER = -duration.DAY
 TOOL_NAME = "collector"
 
 # Resume windows the tests drive the lifecycle with. The brief one has to expire
@@ -148,7 +149,7 @@ def bot(monkeypatch, tmp_path):
         lambda: TranscriptWriter(
             directory=tmp_path,
             timezone=TIMEZONE,
-            retention_days=KEEP_FOREVER,
+            retention=KEEP_FOREVER,
             # Every room on the record: these tests are about when a session
             # seals, not about which rooms a deployment listed.
             schedules=lambda guild_id, channel: ALWAYS,

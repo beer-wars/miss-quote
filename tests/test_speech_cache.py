@@ -13,6 +13,7 @@ from miss_quote.config import audio_cfg, tts_cfg
 from miss_quote.tts import cache as cache_module
 from miss_quote.tts.cache import SpeechCache
 from miss_quote.tts.client import Speech, SynthesisError
+from miss_quote.utils import duration
 
 PHRASE = "you are fined one credit"
 OTHER_PHRASE = "and another one"
@@ -390,9 +391,10 @@ async def test_warming_with_nowhere_to_keep_it_synthesizes_nothing(
 
 
 RETAIN_DAYS = 90
+RETAIN = RETAIN_DAYS * duration.DAY
 ONE_DAY_PAST_IT = RETAIN_DAYS + 1
 LONG_ENOUGH_AGO = timedelta(days=ONE_DAY_PAST_IT).total_seconds()
-RETENTION_OFF = 0
+RETENTION_OFF = duration.NEVER
 
 # A name this cache produces, for standing in for a clip it wrote.
 DIGEST = "a" * 64
@@ -411,42 +413,42 @@ async def test_playing_a_clip_keeps_it_alive(synthesizer, tmp_path):
     The point of the touch: the second ask is served out of memory and never
     opens the file, so nothing else would say the clip is still wanted.
     """
-    cache = SpeechCache(directory=tmp_path, retention_days=RETENTION_OFF)
+    cache = SpeechCache(directory=tmp_path, retention=RETENTION_OFF)
     await _collect(cache)
 
     stored = _cached_files(tmp_path)[0]
     _age(stored)
     await _collect(cache)
 
-    SpeechCache(directory=tmp_path, retention_days=RETAIN_DAYS)
+    SpeechCache(directory=tmp_path, retention=RETAIN)
 
     assert stored.is_file()
 
 
 async def test_a_clip_read_off_disk_is_kept_alive(synthesizer, tmp_path):
-    await _collect(SpeechCache(directory=tmp_path, retention_days=RETENTION_OFF))
+    await _collect(SpeechCache(directory=tmp_path, retention=RETENTION_OFF))
     stored = _cached_files(tmp_path)[0]
     _age(stored)
 
-    await _collect(SpeechCache(directory=tmp_path, retention_days=RETENTION_OFF))
-    SpeechCache(directory=tmp_path, retention_days=RETAIN_DAYS)
+    await _collect(SpeechCache(directory=tmp_path, retention=RETENTION_OFF))
+    SpeechCache(directory=tmp_path, retention=RETAIN)
 
     assert stored.is_file()
 
 
 async def test_a_clip_nobody_has_played_is_reaped_at_startup(synthesizer, tmp_path):
-    await _collect(SpeechCache(directory=tmp_path, retention_days=RETAIN_DAYS))
+    await _collect(SpeechCache(directory=tmp_path, retention=RETAIN))
     _age(_cached_files(tmp_path)[0])
 
-    SpeechCache(directory=tmp_path, retention_days=RETAIN_DAYS)
+    SpeechCache(directory=tmp_path, retention=RETAIN)
 
     assert _cached_files(tmp_path) == []
 
 
 async def test_a_clip_inside_the_window_is_left_alone(synthesizer, tmp_path):
-    await _collect(SpeechCache(directory=tmp_path, retention_days=RETAIN_DAYS))
+    await _collect(SpeechCache(directory=tmp_path, retention=RETAIN))
 
-    SpeechCache(directory=tmp_path, retention_days=RETAIN_DAYS)
+    SpeechCache(directory=tmp_path, retention=RETAIN)
 
     assert len(_cached_files(tmp_path)) == 1
 
@@ -462,7 +464,7 @@ async def test_a_stale_file_the_cache_did_not_write_is_reaped(synthesizer, tmp_p
     stray.write_bytes(b"whatever this is")
     _age(stray)
 
-    SpeechCache(directory=tmp_path, retention_days=RETAIN_DAYS)
+    SpeechCache(directory=tmp_path, retention=RETAIN)
 
     assert not stray.exists()
 
@@ -473,7 +475,7 @@ async def test_an_orphaned_partial_is_reaped(synthesizer, tmp_path):
     orphan.write_bytes(b"half an ogg container")
     _age(orphan)
 
-    SpeechCache(directory=tmp_path, retention_days=RETAIN_DAYS)
+    SpeechCache(directory=tmp_path, retention=RETAIN)
 
     assert not orphan.exists()
 
@@ -487,36 +489,36 @@ async def test_a_subdirectory_is_left_alone(synthesizer, tmp_path):
     _age(held)
     _age(nested)
 
-    SpeechCache(directory=tmp_path, retention_days=RETAIN_DAYS)
+    SpeechCache(directory=tmp_path, retention=RETAIN)
 
     assert held.is_file()
 
 
 async def test_retention_below_a_day_reaps_nothing(synthesizer, tmp_path):
     """So a mis-set variable cannot empty the cache."""
-    await _collect(SpeechCache(directory=tmp_path, retention_days=RETENTION_OFF))
+    await _collect(SpeechCache(directory=tmp_path, retention=RETENTION_OFF))
     _age(_cached_files(tmp_path)[0])
 
-    SpeechCache(directory=tmp_path, retention_days=RETENTION_OFF)
+    SpeechCache(directory=tmp_path, retention=RETENTION_OFF)
 
     assert len(_cached_files(tmp_path)) == 1
 
 
 async def test_a_reaped_clip_is_synthesized_again(synthesizer, tmp_path):
-    await _collect(SpeechCache(directory=tmp_path, retention_days=RETAIN_DAYS))
+    await _collect(SpeechCache(directory=tmp_path, retention=RETAIN))
     _age(_cached_files(tmp_path)[0])
 
-    await _collect(SpeechCache(directory=tmp_path, retention_days=RETAIN_DAYS))
+    await _collect(SpeechCache(directory=tmp_path, retention=RETAIN))
 
     assert synthesizer.calls == [PHRASE, PHRASE]
 
 
 async def test_a_warmed_clip_nobody_plays_is_still_reaped(synthesizer, tmp_path):
     """Warmed is not the same as wanted, and the reaper is right to take it."""
-    await SpeechCache(directory=tmp_path, retention_days=RETAIN_DAYS).warm(PHRASE)
+    await SpeechCache(directory=tmp_path, retention=RETAIN).warm(PHRASE)
     _age(_cached_files(tmp_path)[0])
 
-    SpeechCache(directory=tmp_path, retention_days=RETAIN_DAYS)
+    SpeechCache(directory=tmp_path, retention=RETAIN)
 
     assert _cached_files(tmp_path) == []
 
@@ -552,7 +554,7 @@ async def test_a_clip_from_the_wav_era_is_reaped(synthesizer, tmp_path):
     stale.write_bytes(b"whatever a wav is")
     _age(stale)
 
-    SpeechCache(directory=tmp_path, retention_days=RETAIN_DAYS)
+    SpeechCache(directory=tmp_path, retention=RETAIN)
 
     assert not stale.exists()
 

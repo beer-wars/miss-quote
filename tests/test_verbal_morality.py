@@ -1122,7 +1122,7 @@ async def test_a_server_sets_how_far_its_fines_back_off(speech, speaker):
 
 
 async def test_a_server_sets_its_own_repeat_window(speech, speaker):
-    tool = _tool(speaker, {"words": WORDS, "repeat_seconds": 0})
+    tool = _tool(speaker, {"words": WORDS, "repeat": 0})
 
     await _hear(tool, FORBIDDEN)
     await _hear(tool, FORBIDDEN)
@@ -1131,7 +1131,7 @@ async def test_a_server_sets_its_own_repeat_window(speech, speaker):
 
 
 async def test_a_server_sets_its_own_recall_window(speech, speaker):
-    tool = _tool(speaker, {"words": WORDS, "recall_seconds": 0})
+    tool = _tool(speaker, {"words": WORDS, "recall": 0})
 
     await _hear(tool, FORBIDDEN)
     await _hear(tool, ASKING)
@@ -1629,7 +1629,7 @@ async def test_the_words_are_waited_for_before_the_chime(speech, speaker, chime)
 
 async def test_no_head_start_plays_on_the_first_chunk(speech, speaker, chime, monkeypatch):
     """A synthesizer that streams as it renders needs nothing held back."""
-    monkeypatch.setattr(tts_tool, "tts_cfg", replace(tts_cfg, lead_ms=NO_HEAD_START))
+    monkeypatch.setattr(tts_tool, "tts_cfg", replace(tts_cfg, lead=NO_HEAD_START))
     speech.chunks = CHUNKS
     tool = _tool(speaker, {"words": WORDS, "chime": chime})
 

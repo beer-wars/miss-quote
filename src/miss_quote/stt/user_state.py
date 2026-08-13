@@ -95,7 +95,7 @@ class UserStateManager:
         return [
             state for state in self._users.values()
             if state.is_speaking
-            and now - state.last_activity > process_cfg.speech_flush_timeout_seconds
+            and now - state.last_activity > process_cfg.speech_flush_timeout
         ]
 
     def cleanup_inactive(self) -> list[UserState]:
@@ -103,7 +103,7 @@ class UserStateManager:
         now = time.time()
         expired = [
             uid for uid, s in self._users.items()
-            if now - s.last_activity > process_cfg.user_timeout_seconds
+            if now - s.last_activity > process_cfg.user_timeout
         ]
         states: list[UserState] = []
         for uid in expired:

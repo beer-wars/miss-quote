@@ -16,7 +16,7 @@ Reference first, reasoning second. Where a **Why** drawer sits under a setting, 
 ```yaml
 settings:
   quotes:
-    backoff_seconds: 300
+    backoff: 5m
   fines:
     volume_floor: 0.25
 
@@ -185,28 +185,28 @@ Answers the channel with the film line it just walked into. It listens for a tri
 quotes:
   enabled: true
   config:
-    quiet_seconds: 1
+    quiet: 1s
     chance: 1
-    answer_seconds: 10
-    tie_seconds: 1
+    answer: 10s
+    tie: 1s
     remarks:
       - having watched it more recently than is respectable.
 ```
 
 | Setting | Required | Purpose |
 |---|---|---|
-| `quiet_seconds` | no, `1` | How long whoever said the trigger has to go quiet before the line is said. `0` says it where it was heard; see [letting the speaker finish](#letting-the-speaker-finish) |
-| `backoff_seconds` | no, [`settings.quotes.backoff_seconds`](#settings-quotes) | How long a trigger stays spent after it fires, for **this** server. `0`, or below, answers every trigger every time |
+| `quiet` | no, `1s` | How long whoever said the trigger has to go quiet before the line is said. `0` says it where it was heard; see [letting the speaker finish](#letting-the-speaker-finish) |
+| `backoff` | no, [`settings.quotes.backoff`](#settings-quotes) | How long a trigger stays spent after it fires, for **this** server. `0`, or below, answers every trigger every time |
 | `chance` | no, `1` | The odds a trigger is answered at all, between `0` and `1`. Rolled once per utterance; see [answering only some of it](#answering-only-some-of-it) |
-| `answer_seconds` | no, `10` | How long the channel has to name the title once the line has finished playing. `0` stops the tool asking at all |
-| `tie_seconds` | no, `1` | How long after the first correct answer a second one is still paid. `0` pays only whoever was first |
+| `answer` | no, `10s` | How long the channel has to name the title once the line has finished playing. `0` stops the tool asking at all |
+| `tie` | no, `1s` | How long after the first correct answer a second one is still paid. `0` pays only whoever was first |
 | `penalize_self_answers` | no, `true` | Whether whoever set a line off is barred from naming it. `false` lets them answer like anybody else |
 | `self_answer_penalty` | no, `5` | What an attempt costs them, in credits. Floored at `0` |
 | `remarks` | no | Endings the announcement draws from, **added** to the ones the tool ships with. A lone one may be written unquoted rather than as a list |
 | `generated_point_responses` | no, `false` | Whether to have the model write whole announcements of its own, drawn on beside the shipped endings; see [announcements the model writes](#announcements-the-model-writes) |
 | `generated_catalogue_size` | no, `50` | How many the model is asked for at startup and held for the life of the process |
 | `generated_response_count` | no, `5` | How many of that catalogue are live at a time |
-| `generated_interval_seconds` | no, `3600` | How often a fresh set is drawn from the catalogue. `0`, or below, draws one set for the run |
+| `generated_interval` | no, `1h` | How often a fresh set is drawn from the catalogue. `0`, or below, draws one set for the run |
 | `announcement` | no | What the winner is told. `{user}`, `{credits}`, and `{remark}` |
 | `tie_announcement` | no | What anyone paid on a tie is told. The same placeholders |
 | `self_answer_announcement` | no | What somebody naming their own line is told. The same placeholders, where `{credits}` is what it cost |
@@ -279,7 +279,7 @@ A server with an in-joke of its own writes it under `additional_quotes`, in its 
 quotes:
   enabled: true
   config:
-    answer_seconds: 10
+    answer: 10s
     additional_quotes:
       Firefly:
         cool: Shiny.
@@ -349,7 +349,7 @@ Matching is **whole words, case-insensitive**, so `real` does not fire inside `r
 
 **One line per utterance**, however many triggers were in the sentence. The one that answers is the **earliest in the sentence** rather than the first in the file; where two start at the same word, the longer wins.
 
-**A trigger that has just fired goes quiet for `backoff_seconds`** — the server's own, or [`settings.quotes.backoff_seconds`](#settings-quotes), five minutes by default. The window is keyed on the **trigger**, not the speaker and not the line, is per server, and is held in memory only, so a restart forgives every backoff.
+**A trigger that has just fired goes quiet for `backoff`** — the server's own, or [`settings.quotes.backoff`](#settings-quotes), five minutes by default. The window is keyed on the **trigger**, not the speaker and not the line, is per server, and is held in memory only, so a restart forgives every backoff.
 
 **The whole list is rendered at startup**, the triggers and answers both being a closed set. A line naming whoever set it off is rendered once per name on the roster instead.
 
@@ -366,9 +366,9 @@ A callback that arrives four seconds after the line it answers is not a callback
 
 #### Letting the speaker finish {#letting-the-speaker-finish}
 
-**A line waits for whoever set it off to stop talking**, `quiet_seconds` of it — one second by default. **The window starts again every time that speaker says something else**, so what is waited out is them finishing rather than a fixed pause. Only their own utterances count.
+**A line waits for whoever set it off to stop talking**, `quiet` of it — one second by default. **The window starts again every time that speaker says something else**, so what is waited out is them finishing rather than a fixed pause. Only their own utterances count.
 
-A speaker already holding a line **sets nothing else off** while they are still going; they can still answer a round somebody else opened. The round opens when the line has finished playing, so the wait moves the question along with it. `quiet_seconds: 0` says the line where it was heard, interruption and all.
+A speaker already holding a line **sets nothing else off** while they are still going; they can still answer a round somebody else opened. The round opens when the line has finished playing, so the wait moves the question along with it. `quiet: 0` says the line where it was heard, interruption and all.
 
 <details class="why" markdown="1">
 <summary>Why wait at all</summary>
@@ -394,11 +394,11 @@ A bot the channel is never quite sure is going to say anything is a different jo
 
 #### Naming it
 
-**A line that has been said is also a question.** For `answer_seconds` afterwards the channel can say where it came from — `what is Firefly` — and whoever does is paid a credit through [`scoreboard`](#scoreboard), and told so out loud.
+**A line that has been said is also a question.** For `answer` afterwards the channel can say where it came from — `what is Firefly` — and whoever does is paid a credit through [`scoreboard`](#scoreboard), and told so out loud.
 
 The window opens when the line has **finished playing**, not when the trigger was heard: transcription and synthesis take as long as they take, and a window started at the trigger could be over before the channel had heard the question.
 
-**The first correct answer takes the round, and anyone inside `tie_seconds` of it is paid as well.** Nobody is paid twice for the same title however many times they say it.
+**The first correct answer takes the round, and anyone inside `tie` of it is paid as well.** Nobody is paid twice for the same title however many times they say it.
 
 <details class="why" markdown="1">
 <summary>Why a tie window</summary>
@@ -452,7 +452,7 @@ quotes:
     generated_point_responses: true
     generated_catalogue_size: 50
     generated_response_count: 5
-    generated_interval_seconds: 3600
+    generated_interval: 1h
 ```
 
 This needs an endpoint: `LLM_API_BASE` and `LLM_MODEL`, the same two [`settings.llm`](#settings-llm) points `summary` at. With nothing answering there, rounds are announced with the wordings the tool ships with and the log says so once.
@@ -460,7 +460,7 @@ This needs an endpoint: `LLM_API_BASE` and `LLM_MODEL`, the same two [`settings.
 It works in two stages, and the split is the point:
 
 - **The catalogue** is written once, at startup, in batches, and held in memory for the life of the process. The model is never asked again.
-- **The live set** is `generated_response_count` drawn from that catalogue at random, rendered, and made current for `generated_interval_seconds` before a fresh set is drawn.
+- **The live set** is `generated_response_count` drawn from that catalogue at random, rendered, and made current for `generated_interval` before a fresh set is drawn.
 
 A draw only ever happens while the bot is **in a voice channel**, and the phrases it picked are synthesized *before* they go live — so nothing is ever said that was not already rendered, and a server nobody is sitting in costs a sleeping task and nothing else. Joining a channel draws a first set immediately rather than waiting out the interval.
 
@@ -473,7 +473,7 @@ Every announcement names the winner, so a draw renders `generated_response_count
 
 Because the catalogue does not change while the process runs, that number has a ceiling: `generated_catalogue_size × roster`, reached once and then served from cache forever. Most draws after the first day render nothing at all. Regenerating every hour instead would have made that an unbounded cost rather than a one-off.
 
-What does accumulate is restarts, since each one writes a fresh catalogue. Rendered speech is kept for [`settings.tts.cache_retention_days`](#settings-tts), 90 by default, so a bot restarted daily leaves a few thousand clips behind before the reaper starts clearing the oldest. Shorten that retention, or lengthen the interval, where the speech volume is tight.
+What does accumulate is restarts, since each one writes a fresh catalogue. Rendered speech is kept for [`settings.tts.cache_retention`](#settings-tts), ninety days by default, so a bot restarted daily leaves a few thousand clips behind before the reaper starts clearing the oldest. Shorten that retention, or lengthen the interval, where the speech volume is tight.
 
 </details>
 
@@ -541,8 +541,8 @@ A server's rooms are not interchangeable. One is where a game night happens and 
 | `retelling_prompt` | `bard` | Which prompt turns a stored summary into something to say out loud |
 | `retelling_words` | `200` | Roughly how long the spoken retelling should be — a target the prompt is told to aim at, not a cap it is cut to. About a minute out loud |
 | `minimum_utterances` | `5` | Below this a session is not a conversation and is not summarized |
-| `backoff_seconds` | `120` | How soon the channel can be told the same evening again. `0`, or below, tells it every time |
-| `session_gap_minutes` | `10` | How long the room can sit quiet before the rest of the night is a different evening. Not `resume_seconds`, and not to be set to match it |
+| `backoff` | `2m` | How soon the channel can be told the same evening again. `0`, or below, tells it every time |
+| `session_gap` | `10m` | How long the room can sit quiet before the rest of the night is a different evening. Not `resume`, and not to be set to match it |
 | `schedule` | *(unset)* | When a session in this room may **start** being written down — see [writing a window](#writing-a-window). Also what makes several sessions [one sitting](#one-evening-several-sessions). Unset keeps every session, or whatever `settings.transcripts.schedule` says |
 | `preamble` | `Sure! Let me go look at my notes.` | What plays while the model is thinking |
 | `empty` | `I don't have any notes from this channel yet.` | What plays when nothing has ever been written down in this room |
@@ -552,11 +552,11 @@ A server's rooms are not interchangeable. One is where a game night happens and 
 | `hold_volume` | `0.15` | How loud that music is next to `PLAYBACK_VOLUME` — `0.15` is 15% as loud, not 15% of the amplitude ([how a volume is read](#volumes)). Clamped to `0`–`1` |
 | `name` | `miss quote`, `misquote`, `missquote`, `mis quote`, `ms quote`, `mizquote`, `mrs quote`, `miss quotes`, `misquotes`, `missquotes`, `misquoted`, `missquoted` | What the bot answers to, in the spellings a transcriber returns for a name it has never been told. **Replaces** the default |
 | `triggers` | `what happened`, `what did we do`, `recap`, `read me your notes`, `tell me about` | How asking **starts**; which evening is a clause after it. **Replaces** the default |
-| `address_window_seconds` | `15` | How long the name is held when it arrives in an utterance of its own, so the speaker's next one can be the question. `0` wants the whole question in one breath |
-| `clause_window_seconds` | `1.5` | How long a question that named no evening waits to see whether one is still coming. Covered by the preamble, so it costs nothing to listen to. `0` answers the moment the question lands |
+| `address_window` | `15s` | How long the name is held when it arrives in an utterance of its own, so the speaker's next one can be the question. `0` wants the whole question in one breath |
+| `clause_window` | `1.5s` | How long a question that named no evening waits to see whether one is still coming. Covered by the preamble, so it costs nothing to listen to. `0` answers the moment the question lands |
 | `post_transcripts` | `false` | Whether the room watches itself being transcribed, in one message in `channel` that is rewritten as it talks; see [showing it as it is said](#showing-it-as-it-is-said) |
 | `transcript_lines` | `10` | How many lines are up at once |
-| `transcript_refresh_seconds` | `2` | How long the feed waits after each write before writing again. Held at `0.25`; `0` turns the feed off |
+| `transcript_refresh` | `2s` | How long the feed waits after each write before writing again. Held at `0.25`; `0` turns the feed off |
 
 #### One evening, several sessions {#one-evening-several-sessions}
 
@@ -590,7 +590,7 @@ Starting one by hand is the deliberate exception: it is an account of one conver
 
 **A long line costs the lines above it rather than its own tail.** There is no cap on one utterance unless a channel sets `transcript_line_limit`, which puts an `…` on anything longer.
 
-**It writes on change, not on a timer**, waiting out `transcript_refresh_seconds` from the **end** of each write. A quiet room costs nothing, a burst of four people landing together is one edit, and a slow Discord slows the feed instead of building a backlog. Below `0.25` is held there.
+**It writes on change, not on a timer**, waiting out `transcript_refresh` from the **end** of each write. A quiet room costs nothing, a burst of four people landing together is one edit, and a slow Discord slows the feed instead of building a backlog. Below `0.25` is held there.
 
 **It comes down when the room does**, deleted as the session seals rather than after the summary is written. The next session posts a new one; what the evening leaves behind is the summary.
 
@@ -622,7 +622,7 @@ A session under `minimum_utterances` is not summarized. **A failure anywhere cos
 
 **A whole session is sent in one request, and it is not truncated.** A long evening is tens of thousands of tokens, and an endpoint whose context will not take it refuses the request — logged, no file, no post, transcript intact. **Point `LLM_MODEL` at something with the context to hold a session.**
 
-**Keep [`settings.llm.timeout_seconds`](#settings-llm) well under `terminationGracePeriodSeconds`.** A session sealed as the pod goes down is summarized inside the shutdown, so a whole LLM round trip runs inside the grace period and can be killed by it.
+**Keep [`settings.llm.timeout`](#settings-llm) well under `terminationGracePeriodSeconds`.** A session sealed as the pod goes down is summarized inside the shutdown, so a whole LLM round trip runs inside the grace period and can be killed by it.
 
 <details class="why" markdown="1">
 <summary>Why those fields go, and why a long evening is refused rather than cut</summary>
@@ -643,7 +643,7 @@ It answers **for that channel**, with the whole of the evening asked about — [
 
 Asking takes **both** a name and a trigger, the name first; punctuation is ignored on both sides. Several spellings of the name ship by default, an ASR guessing phonetically at a name it has never been told.
 
-**It does not have to be one breath.** A name said with no question after it is **held for `address_window_seconds`**, fifteen by default, so that speaker's next utterance can finish the question. It is per speaker, and `0` wants the whole question at once. A question that named no evening then **waits `clause_window_seconds`**, a second and a half, to see whether one is still coming — covered by the preamble, so it costs nothing to listen to.
+**It does not have to be one breath.** A name said with no question after it is **held for `address_window`**, fifteen seconds by default, so that speaker's next utterance can finish the question. It is per speaker, and `0` wants the whole question at once. A question that named no evening then **waits `clause_window`**, a second and a half, to see whether one is still coming — covered by the preamble, so it costs nothing to listen to.
 
 What none of this recovers is the two halves arriving the other way round: transcription runs several at a time, and an utterance is stamped when it is written rather than when it was said, so there is nothing to sort by.
 
@@ -672,7 +672,7 @@ Ordinals are spelled out because that is what an ASR returns; digits work too, b
 
 The bot plays the pre-rendered `preamble` and **starts the inference before it starts saying it**, so the announcement covers the wait. The lookup happens first, so it never announces that it is going to look and then finds nothing: with nothing to find it says the `empty` line, or `missing` if the trouble is the night that was named.
 
-A second ask while a retelling is still going is dropped rather than queued. `backoff_seconds` is per **evening** rather than per channel, since somebody asking about a different night is asking a different question.
+A second ask while a retelling is still going is dropped rather than queued. `backoff` is per **evening** rather than per channel, since somebody asking about a different night is asking a different question.
 
 **The retelling itself is never cached** — it is composed for one moment and nobody will ever ask for those exact words again. The preamble, the empty line, and a `closing` are kept.
 
@@ -691,9 +691,9 @@ A completion routinely runs longer than the preamble, and what is left over is d
 
 It is **off unless a channel names a clip**, and nothing is shipped. Drop a 16-bit WAV in `SPEECH_DIR/chimes` and name it here without its extension. It **loops**, so author a short passage that meets itself — ten to thirty seconds, not three minutes, since a clip is read into memory whole and held for the life of the process.
 
-- **It fades up** over [`settings.tts.hold_fade_in_ms`](#settings-tts) (500 ms) as soon as the preamble ends. Quickly, because the gap it is covering has already started.
-- **It loops for as long as the wait lasts** — the model thinking, and then the synthesizer starting on the answer. Both are covered: a completion that returns instantly still leaves the `lead_ms` head start to be waited out.
-- **It fades down** over `settings.tts.hold_fade_out_ms` (2 s), starting only once the first speech is in hand, so the music reaches silence exactly where the first word begins rather than being cut off at it.
+- **It fades up** over [`settings.tts.hold_fade_in`](#settings-tts) (500 ms) as soon as the preamble ends. Quickly, because the gap it is covering has already started.
+- **It loops for as long as the wait lasts** — the model thinking, and then the synthesizer starting on the answer. Both are covered: a completion that returns instantly still leaves the `lead` head start to be waited out.
+- **It fades down** over `settings.tts.hold_fade_out` (2 s), starting only once the first speech is in hand, so the music reaches silence exactly where the first word begins rather than being cut off at it.
 
 The music and the retelling are **one clip**, armed once — two calls would put a gap exactly where this is trying not to have one. `hold_volume` applies to the music alone; the retelling arrives at the loudness it would have had anyway. A clip that is missing or will not parse costs the music and not the answer, and the name is checked at startup but kept regardless, so a volume mounted later starts working without a restart.
 
@@ -744,7 +744,7 @@ There is nothing to configure per server. What the tally is counted in and how o
 - **A fine is a debit.** Everybody starts at nothing and goes down. Nothing assumes that direction — `quotes` calls `credit`, so a balance can climb back toward nothing and past it.
 - **Only `users` are eligible.** Everyone on the roster starts on the board at nothing spent. Somebody not on it is still heard, announced, and counted, just not published. A server with no roster publishes nothing rather than an empty line.
 - **Counts are per server**, keyed on the user ID, so a rename does not hand somebody else's debt to whoever inherited their nickname.
-- **A restart is not an amnesty.** The tally is loaded from `CREDITS_FILE` at startup, written back on `save_seconds`, and written again on shutdown. A file that will not parse is reported and ignored.
+- **A restart is not an amnesty.** The tally is loaded from `CREDITS_FILE` at startup, written back on `save`, and written again on shutdown. A file that will not parse is reported and ignored.
 
 <details class="why" markdown="1">
 <summary>Why four places, why a display name is not published, and how the two intervals differ</summary>
@@ -804,17 +804,17 @@ verbal-morality:
 |---|---|---|
 | `words` | yes | Stems of what the server objects to. A lone one may be written unquoted rather than as a list |
 | `announcement` | no | What gets said. `{user}`, `{credits}`, and `{violations}` are the placeholders |
-| `repeat_announcement` | no | Said instead when the same speaker is fined again inside `repeat_seconds`, below. Same placeholders |
+| `repeat_announcement` | no | Said instead when the same speaker is fined again inside `repeat`, below. Same placeholders |
 | `recall_triggers` | no, `what did i say`, `what did i just say`, `what was that` | How somebody asks what they were just fined for. **Replaces** the default. A lone one may be written unquoted rather than as a list |
 | `recall_announcement` | no | What they are told. `{user}` and `{word}` are the placeholders — not `{credits}`, which is not what is being announced |
 | `chime` | no | A WAV in `SPEECH_DIR/chimes`, played ahead of the announcement, named without its `.wav`. Also the whole of a [dampened fine](#what-a-fine-costs-and-how-loudly) |
-| `repeat_seconds` | no, [`settings.fines`](#settings-fines) | How soon the same speaker is told they are "also fined" rather than hearing the whole sentence again |
-| `recall_seconds` | no, [`settings.fines`](#settings-fines) | How long after being fined a speaker can ask what the word was |
-| `backoff_seconds` | no, [`settings.fines`](#settings-fines) | The sliding window a violation counts for against how loudly the next one is announced |
+| `repeat` | no, [`settings.fines`](#settings-fines) | How soon the same speaker is told they are "also fined" rather than hearing the whole sentence again |
+| `recall` | no, [`settings.fines`](#settings-fines) | How long after being fined a speaker can ask what the word was |
+| `backoff` | no, [`settings.fines`](#settings-fines) | The sliding window a violation counts for against how loudly the next one is announced |
 | `backoff_percent` | no, [`settings.fines`](#settings-fines) | How much of the next announcement's loudness each violation inside that window takes off |
 | `volume_floor` | no, [`settings.fines`](#settings-fines) | The quietest a fine is announced once the full backoff is earned |
 | `dampen_after` | no, [`settings.fines`](#settings-fines) | How many fines this server's speakers hear in full before a one-credit one drops to the chime |
-| `dampen_seconds` | no, [`settings.fines`](#settings-fines) | The sliding window that budget is spent inside |
+| `dampen` | no, [`settings.fines`](#settings-fines) | The sliding window that budget is spent inside |
 
 All three templates default to the lines above, which the tool carries, so a server that wants the defaults can leave them out. A template with a placeholder nothing fills is rejected at startup rather than at the moment someone swears, and the error names which setting it was and which placeholders that one actually has — `recall_announcement` has `{user}` and `{word}`, and reaching for `{credits}` in it is refused.
 
@@ -837,17 +837,17 @@ Nothing checks whether the result is a word anybody says, and it does not need t
 
 #### What a fine costs, and how loudly {#what-a-fine-costs-and-how-loudly}
 
-The settings named in this section — `repeat_seconds`, `recall_seconds`, `backoff_seconds`, `backoff_percent`, `volume_floor`, `dampen_after`, and `dampen_seconds` — are written either here, in this server's `config`, or in [`settings.fines`](#settings-fines) for every server that names none of its own. This server's wins.
+The settings named in this section — `repeat`, `recall`, `backoff`, `backoff_percent`, `volume_floor`, `dampen_after`, and `dampen` — are written either here, in this server's `config`, or in [`settings.fines`](#settings-fines) for every server that names none of its own. This server's wins.
 
 **The fine scales with the utterance**: one credit per forbidden word in it. `{credits}` is filled in already pluralized and as a numeral; what a credit is *called* is [`settings.credits.currency`](#settings-credits), pluralized by the same spelling rules the word list uses, so `penny` announces as `2 pennies`. `{violations}` reads `a violation` for one and `multiple violations` for more.
 
 **What does not scale is the number of announcements.** Three violations in one utterance earn one, and **a violation earned while an announcement is playing is counted and not announced at all**. The tally is charged either way.
 
-**Being fined twice in a row is worded differently.** A speaker fined again inside `repeat_seconds` gets `repeat_announcement` — "you are *also* fined". It is per speaker.
+**Being fined twice in a row is worded differently.** A speaker fined again inside `repeat` gets `repeat_announcement` — "you are *also* fined". It is per speaker.
 
-**A repeat offender is announced more quietly.** Every violation inside a sliding `backoff_seconds` takes `backoff_percent` off the next announcement, down to `volume_floor` — at the defaults, 5% a violation over five minutes, floored at a quarter as loud, so fifteen reach the bottom. The percentage is off what a listener hears rather than off the amplitude ([how a volume is read](#volumes)). The first swear in a window is at full volume, and none of this affects the tally.
+**A repeat offender is announced more quietly.** Every violation inside a sliding `backoff` takes `backoff_percent` off the next announcement, down to `volume_floor` — at the defaults, 5% a violation over five minutes, floored at a quarter as loud, so fifteen reach the bottom. The percentage is off what a listener hears rather than off the amplitude ([how a volume is read](#volumes)). The first swear in a window is at full volume, and none of this affects the tally.
 
-**Past a point the sentence stops being said at all.** After `dampen_after` fines in full inside a sliding `dampen_seconds`, a **one-credit** fine becomes the `chime` alone. **This is off unless asked for**: `-1` is the default, and `0` dampens from the first one. A fine worth **more than one credit** is never dampened, though it does spend from the budget.
+**Past a point the sentence stops being said at all.** After `dampen_after` fines in full inside a sliding `dampen`, a **one-credit** fine becomes the `chime` alone. **This is off unless asked for**: `-1` is the default, and `0` dampens from the first one. A fine worth **more than one credit** is never dampened, though it does spend from the budget.
 
 A dampened fine is still counted, still answers `recall_triggers`, and is still quietened by the backoff. **It needs a `chime`** — with none configured a dampened fine says nothing at all, which is reported at startup.
 
@@ -872,7 +872,7 @@ Rendering stops at three violations because that is what a sentence usually hold
 
 #### Asking what it was
 
-The announcement names the fine and never the word. **Saying one of `recall_triggers` within `recall_seconds` of being fined is answered with the word**, through `recall_announcement` — ten seconds by default, and that window is the whole gate. Outside it, and for anybody with no fine on record, nothing is said at all.
+The announcement names the fine and never the word. **Saying one of `recall_triggers` within `recall` of being fined is answered with the word**, through `recall_announcement` — ten seconds by default, and that window is the whole gate. Outside it, and for anybody with no fine on record, nothing is said at all.
 
 The answer is **the last word of the fine that earned it**, and it is **the asker's own**. **A fine that went unannounced can still be asked about**, the word being recorded whether or not anybody heard the fine.
 
@@ -893,7 +893,26 @@ What a fine can be is the roster against three counts. What an answer can be is 
 
 The `settings:` block of `config.yaml`. Every one of these has a default, so none of them has to be written down; a name or a value that will not parse is reported at startup and falls back to the default.
 
-**Settings of the same name under different sections are unrelated.** `backoff_seconds` means one thing under [`settings.quotes`](#settings-quotes) and another under [`settings.fines`](#settings-fines), and neither reads the other. The section is part of the name.
+**Settings of the same name under different sections are unrelated.** `backoff` means one thing under [`settings.quotes`](#settings-quotes) and another under [`settings.fines`](#settings-fines), and neither reads the other. The section is part of the name.
+
+### Spans of time {#spans}
+
+Every setting naming a span — a timeout, a backoff, a retention, a fade — carries its unit on the value rather than in its name, both here and in a tool's own `config`.
+
+| Written | Means |
+|---|---|
+| `500ms` | half a second |
+| `30s` | thirty seconds |
+| `5m` | five minutes |
+| `2h` | two hours |
+| `90d` | ninety days |
+| `1w` | a week |
+| `1h30m` | ninety minutes — units compound and are summed |
+| `30` | thirty seconds — a bare number is seconds |
+
+**A span can be turned off three ways**, which mean the same thing and read differently depending on the setting: `forever`, `never`, `0`, or a negative span like `-1d`. A retention of `forever` keeps everything; a backoff of `0` answers every time.
+
+**`off` and `no` are not among them.** YAML reads both as booleans before the value is ever parsed, so a file that turns a window off that way is reported rather than obeyed.
 
 ### settings.tts {#settings-tts}
 
@@ -901,12 +920,12 @@ Only used by tools that answer out loud. Where the synthesizer *is* is `TTS_HOST
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `timeout_seconds` | `30.0` | Budget for a **single** wait on the synthesizer, not for a whole clip — a long phrase arriving steadily is not cut off for taking a long time |
-| `stall_seconds` | `10.0` | How long the player waits mid-clip for audio that never comes before ending it |
-| `lead_ms` | `500.0` | How much speech to have in hand before a clip starts playing, so a synthesizer that renders a phrase whole leaves no gap behind a chime. `0` starts on the first chunk |
-| `hold_fade_in_ms` | `500.0` | How quickly music under a wait arrives. Only the `summary` tool asks for any, and only for a channel that set `hold_music`. `0` is a cut |
-| `hold_fade_out_ms` | `2000.0` | How slowly it leaves, timed to reach silence where the first word starts. `0` is a cut |
-| `cache_retention_days` | `90` | Days anything in `SPEECH_DIR/cache` survives without being played, counted from the last time it was. Also what clears out clips in a format nothing can read any more, and `.partial` files orphaned by a process killed mid-write. Any value below `1` keeps them forever. Chimes live elsewhere and are never reaped |
+| `timeout` | `30s` | Budget for a **single** wait on the synthesizer, not for a whole clip — a long phrase arriving steadily is not cut off for taking a long time |
+| `stall` | `10s` | How long the player waits mid-clip for audio that never comes before ending it |
+| `lead` | `500ms` | How much speech to have in hand before a clip starts playing, so a synthesizer that renders a phrase whole leaves no gap behind a chime. `0` starts on the first chunk |
+| `hold_fade_in` | `500ms` | How quickly music under a wait arrives. Only the `summary` tool asks for any, and only for a channel that set `hold_music`. `0` is a cut |
+| `hold_fade_out` | `2s` | How slowly it leaves, timed to reach silence where the first word starts. `0` is a cut |
+| `cache_retention` | `90d` | How long anything in `SPEECH_DIR/cache` survives without being played, counted from the last time it was. Also what clears out clips in a format nothing can read any more, and `.partial` files orphaned by a process killed mid-write. `forever`, `0`, or a negative span keeps them. Chimes live elsewhere and are never reaped |
 
 ### settings.credits {#settings-credits}
 
@@ -915,8 +934,8 @@ Only used by `scoreboard`. Where the tally is written down is `CREDITS_FILE`.
 | Setting | Default | Purpose |
 |---|---|---|
 | `currency` | `credit` | What a balance is denominated in, in the singular. The plural is grown from it by the spelling, so `penny` announces as `2 pennies`. Wording only — it changes nothing about what is counted |
-| `save_seconds` | `5.0` | How often a changed tally is written to disk. `0`, or any value below it, stops the loop: the tally is kept in memory and written only on shutdown |
-| `topic_seconds` | `10.0` | How often a changed tally is published to the voice channel topic — set as the channel **status**, a voice channel having no topic. The board also goes up the moment the bot takes up a channel, changed or not, so a fresh room is not left blank until somebody swears. `0`, or any value below it, keeps the tally off the channel entirely |
+| `save` | `5s` | How often a changed tally is written to disk. `0`, or any value below it, stops the loop: the tally is kept in memory and written only on shutdown |
+| `topic` | `10s` | How often a changed tally is published to the voice channel topic — set as the channel **status**, a voice channel having no topic. The board also goes up the moment the bot takes up a channel, changed or not, so a fresh room is not left blank until somebody swears. `0`, or any value below it, keeps the tally off the channel entirely |
 
 ### settings.fines {#settings-fines}
 
@@ -933,13 +952,13 @@ A settings block is read before any server exists, so a value that will not pars
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `repeat_seconds` | `5.0` | How soon after being fined the same speaker is told they are "also fined" rather than hearing the whole sentence again. `0`, or any value below it, turns the second wording off |
-| `recall_seconds` | `10.0` | How long after being fined a speaker can ask what the word was and be told. `0`, or any value below it, never answers |
-| `backoff_seconds` | `300.0` | The sliding window a violation counts for against how loudly the next one is announced |
+| `repeat` | `5s` | How soon after being fined the same speaker is told they are "also fined" rather than hearing the whole sentence again. `0`, or any value below it, turns the second wording off |
+| `recall` | `10s` | How long after being fined a speaker can ask what the word was and be told. `0`, or any value below it, never answers |
+| `backoff` | `5m` | The sliding window a violation counts for against how loudly the next one is announced |
 | `backoff_percent` | `5` | How much of the next announcement's loudness each violation inside that window takes off, and off the knob rather than the amplitude, so 5% is 5% quieter to listen to ([how a volume is read](#volumes)). `0` takes nothing off, turning the backoff off; anything above `100` reaches the floor on the first repeat, and anything negative is treated as `0` rather than made louder |
 | `volume_floor` | `0.25` | The quietest a fine is announced once a speaker has earned the full backoff, as how loud it is next to `PLAYBACK_VOLUME` — a quarter is a quarter as loud ([how a volume is read](#volumes)). `0` silences a repeat offender entirely; `1` turns the backoff off |
-| `dampen_after` | `-1` | How many fines a speaker hears **in full** inside `dampen_seconds` before a one-credit one drops to the chime alone. `-1`, or any value below `0`, announces every fine in full; `0` is a budget of nothing, so the first one-credit fine of a window is already a chime |
-| `dampen_seconds` | `3600.0` | The sliding window that budget is spent inside, so a speaker is owed a full fine again this long after the last one they heard |
+| `dampen_after` | `-1` | How many fines a speaker hears **in full** inside `dampen` before a one-credit one drops to the chime alone. `-1`, or any value below `0`, announces every fine in full; `0` is a budget of nothing, so the first one-credit fine of a window is already a chime |
+| `dampen` | `1h` | The sliding window that budget is spent inside, so a speaker is owed a full fine again this long after the last one they heard |
 
 ### settings.quotes {#settings-quotes}
 
@@ -949,7 +968,7 @@ Only used by `quotes`. The triggers and the lines themselves are a YAML file at 
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `backoff_seconds` | `300.0` | How long a trigger stays spent after it fires, so a channel that keeps saying the same word hears the line once. `0`, or any value below it, answers every trigger every time |
+| `backoff` | `5m` | How long a trigger stays spent after it fires, so a channel that keeps saying the same word hears the line once. `0`, or any value below it, answers every trigger every time |
 
 ### settings.transcripts {#transcripts}
 
@@ -957,8 +976,8 @@ Where transcripts are written is `TRANSCRIPT_DIR`, and what clock they are stamp
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `retention_days` | `-1` | Days to keep. `-1`, or any value below `1`, keeps forever |
-| `resume_seconds` | `5.0` | How long a transcript is held open for a reconnect to the same channel. `0` seals it on disconnect |
+| `retention` | `forever` | How far back to keep. `forever`, `0`, or a negative span keeps everything. Age comes from the day in a filename, so a span shorter than a day leaves only what was filed today |
+| `resume` | `5s` | How long a transcript is held open for a reconnect to the same channel. `0` seals it on disconnect |
 | `schedule` | *(unset)* | The default windows for a room listed in `monitored_channels` that names none of its own — see [writing a window](#writing-a-window). **Not** what decides which rooms are kept; that is the room list itself |
 
 Pruning is **off by default**, and any value below `1` disables it entirely — `0` is a no-op rather than "delete everything", so a mis-set setting cannot destroy the archive. At a positive `N`, files older than `N` days are deleted, aged by the **date at the front of the filename** rather than mtime. Pruning runs at startup and whenever a session opens.
@@ -1005,7 +1024,7 @@ Only used by `summary`. Where the endpoint *is*, what key it wants, and which mo
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `timeout_seconds` | `120.0` | Budget for one completion, end to end. Generous next to the ASR's, a summary being several hundred tokens of output rather than a sentence. Keep it well under the deployment's termination grace period |
+| `timeout` | `2m` | Budget for one completion, end to end. Generous next to the ASR's, a summary being several hundred tokens of output rather than a sentence. Keep it well under the deployment's termination grace period |
 | `max_output_tokens` | `1024` | A ceiling on what is **generated**. Not the context window and not the whole request: the input is not counted against it. Named for what it bounds rather than for the wire field it becomes (`max_tokens`), whose name has cost more than one person an afternoon |
 | `temperature` | `0.7` | How much licence the model has. Higher than a mechanical transform would want, because the output is prose somebody reads for pleasure |
 | `thinking` | `true` | Whether a model that reasons before answering is allowed to. `false` sends `chat_template_kwargs.enable_thinking`, and is sent **only** to turn reasoning off — an endpoint that has never heard of the field is never shown it |
@@ -1041,7 +1060,7 @@ Where summaries are written is `SUMMARY_DIR`.
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `retention_days` | `-1` | Days to keep. `-1`, or any value below `1`, keeps forever. Its own clock, separate from the transcripts': keeping summaries for a year and transcripts for a month is a reasonable thing to want |
+| `retention` | `forever` | How far back to keep. `forever`, `0`, or a negative span keeps everything. Its own clock, separate from the transcripts': keeping summaries for a year and transcripts for a month is a reasonable thing to want |
 
 ## Environment
 

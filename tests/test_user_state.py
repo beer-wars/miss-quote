@@ -8,7 +8,7 @@ def test_stale_speech_state_is_detected(monkeypatch) -> None:
     monkeypatch.setattr(
         user_state,
         "process_cfg",
-        SimpleNamespace(speech_flush_timeout_seconds=1.0, user_timeout_seconds=60),
+        SimpleNamespace(speech_flush_timeout=1.0, user_timeout=60),
     )
     manager = user_state.UserStateManager(vad_iterator_factory=object)
     state = manager.get_or_create(123)
@@ -22,7 +22,7 @@ def test_cleanup_inactive_returns_removed_states(monkeypatch) -> None:
     monkeypatch.setattr(
         user_state,
         "process_cfg",
-        SimpleNamespace(speech_flush_timeout_seconds=1.0, user_timeout_seconds=1),
+        SimpleNamespace(speech_flush_timeout=1.0, user_timeout=1),
     )
     manager = user_state.UserStateManager(vad_iterator_factory=object)
     state = manager.get_or_create(456)

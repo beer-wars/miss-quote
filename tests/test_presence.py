@@ -17,6 +17,7 @@ from miss_quote.tools.base import Tool
 from miss_quote.tools.runner import ToolRunner
 from miss_quote.transcript.schedule import ALWAYS, Schedule
 from miss_quote.transcript.writer import TranscriptWriter
+from miss_quote.utils import duration
 
 SERVER = 123456789012345678
 ALIAS = "first-server"
@@ -24,7 +25,7 @@ CHANNEL_ID = 5150
 
 TIMEZONE = "America/Los_Angeles"
 ZONE = ZoneInfo(TIMEZONE)
-KEEP_FOREVER = -1
+KEEP_FOREVER = -duration.DAY
 
 WORDING = "🎙️ transcribing..."
 NO_RESUMING = 0.0
@@ -220,7 +221,7 @@ def make_bot(monkeypatch, tmp_path):
 
     def _build(
         schedule: Schedule = ALWAYS,
-        resume_seconds: float = NO_RESUMING,
+        resume: float = NO_RESUMING,
         tools: dict | None = None,
         registry: dict | None = None,
     ):
@@ -235,7 +236,7 @@ def make_bot(monkeypatch, tmp_path):
         monkeypatch.setattr(
             client_module,
             "transcript_cfg",
-            replace(transcript_cfg, resume_window_seconds=resume_seconds),
+            replace(transcript_cfg, resume_window_seconds=resume),
         )
         monkeypatch.setattr(
             client_module,
@@ -243,7 +244,7 @@ def make_bot(monkeypatch, tmp_path):
             lambda: TranscriptWriter(
                 directory=tmp_path,
                 timezone=TIMEZONE,
-                retention_days=KEEP_FOREVER,
+                retention=KEEP_FOREVER,
                 schedules=lambda guild_id, channel: schedule,
             ),
         )
@@ -313,7 +314,7 @@ async def test_a_session_held_open_for_a_reconnect_still_counts(make_bot, frozen
     The alternative flickers the status through every resume window.
     """
     frozen_clock(INSIDE)
-    bot = make_bot(schedule=EVENING, resume_seconds=A_LONG_WINDOW)
+    bot = make_bot(schedule=EVENING, resume=A_LONG_WINDOW)
     channel = FakeChannel()
 
     await bot._connect(channel)
@@ -327,7 +328,7 @@ async def test_a_session_held_open_for_a_reconnect_still_counts(make_bot, frozen
 
 async def test_shutting_down_clears_the_status(make_bot, frozen_clock):
     frozen_clock(INSIDE)
-    bot = make_bot(schedule=EVENING, resume_seconds=A_LONG_WINDOW)
+    bot = make_bot(schedule=EVENING, resume=A_LONG_WINDOW)
 
     await bot._connect(FakeChannel())
     await bot._close_all_sessions()

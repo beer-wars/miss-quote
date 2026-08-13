@@ -106,7 +106,7 @@ TRANSCRIPT_DIR/
 
 A session opens when the bot joins and closes when it leaves — because the channel emptied, because someone disconnected it, or because the pod terminated. The file is named for the moment it opened and keeps that name until it closes, so **a conversation spanning midnight stays in one file** and **rejoining starts a new one**. A session that opens in the same second as another in the same channel gets a `-2` on the end rather than appending to it.
 
-Rejoining is qualified by the **resume window** ([`settings.transcripts.resume_seconds`]({{ '/configuration/#transcripts' | relative_url }}), 5 s). A channel that empties and refills inside it is treated as one conversation with a gap in it — someone's client dropped, or the last person stepped away — so the transcript is held open and appended to rather than sealed and replaced.
+Rejoining is qualified by the **resume window** ([`settings.transcripts.resume`]({{ '/configuration/#transcripts' | relative_url }}), 5 s). A channel that empties and refills inside it is treated as one conversation with a gap in it — someone's client dropped, or the last person stepped away — so the transcript is held open and appended to rather than sealed and replaced.
 
 The server directory is its **alias from `servers`**, fixed in configuration rather than read from Discord; channels use their Discord name. Names are lowercased and reduced to `a-z0-9_-`, dropping dots and separators rather than escaping them, so no name can express a path traversal.
 
@@ -203,7 +203,7 @@ The same guild and channel directories, and **a file named for the transcript it
 <details class="why" markdown="1">
 <summary>Why a separate root, and why that filename</summary>
 
-A transcript is everything anybody said; a summary is something you would show people. They can be mounted, backed up, and shared on different terms, and `settings.summaries.retention_days` is its own clock — keeping summaries for a year and transcripts for a month is a reasonable thing to want.
+A transcript is everything anybody said; a summary is something you would show people. They can be mounted, backed up, and shared on different terms, and `settings.summaries.retention` is its own clock — keeping summaries for a year and transcripts for a month is a reasonable thing to want.
 
 Naming a summary for its transcript rather than for its own moment means a session that took a `-2` to avoid a collision keeps it here, and a summary written late — by a backfill, or by a deployment pointed at a working endpoint after the fact — still lands on the right name.
 
@@ -213,9 +213,9 @@ Naming a summary for its transcript rather than for its own moment means a sessi
 
 A room that empties while everyone refills a glass, or a pod that restarts mid-deploy, files the rest of the night separately — and answering with the newest of those retells the last forty minutes of a four-hour evening.
 
-So what a question looks up is the **run** of consecutive sessions with no more than `session_gap_minutes` between one ending and the next beginning, read in order and handed to the reteller as one piece of text. Which sessions get *written* as one account is a different question, decided by the schedule — see [one evening, several sessions]({{ '/configuration/#one-evening-several-sessions' | relative_url }}).
+So what a question looks up is the **run** of consecutive sessions with no more than `session_gap` between one ending and the next beginning, read in order and handed to the reteller as one piece of text. Which sessions get *written* as one account is a different question, decided by the schedule — see [one evening, several sessions]({{ '/configuration/#one-evening-several-sessions' | relative_url }}).
 
-**`session_gap_minutes` is not `settings.transcripts.resume_seconds`** and should not be set to match it. The resume window holds a session open and delays every summary behind it; this is read long afterwards, off files already on disk. Widening the resume window cannot replace it either, because shutdown seals every session regardless.
+**`session_gap` is not `settings.transcripts.resume`** and should not be set to match it. The resume window holds a session open and delays every summary behind it; this is read long afterwards, off files already on disk. Widening the resume window cannot replace it either, because shutdown seals every session regardless.
 
 <details class="why" markdown="1">
 <summary>Four details that make a run hold together</summary>
@@ -235,16 +235,16 @@ Tools answer out loud through the [`tts`]({{ '/configuration/#tts-tool' | relati
 
 Synthesis is a second Wyoming server (`TTS_HOST`, `TTS_PORT`) — recognition and synthesis are both Wyoming, but they are two servers and only one of them wants a GPU. The voice is process-wide: a bot that answers in two voices is a bot nobody can tell is one bot.
 
-**Audio streams.** Playback starts on the first chunk rather than the last, so a cache miss plays while it is still being rendered. `bot/speaker.py` buffers between the event loop and Discord's player thread, padding the tail to a whole frame so the last few milliseconds of a word survive. A synthesizer that stalls mid-clip costs the rest of that clip after `settings.tts.stall_seconds`, not a thread and a voice connection.
+**Audio streams.** Playback starts on the first chunk rather than the last, so a cache miss plays while it is still being rendered. `bot/speaker.py` buffers between the event loop and Discord's player thread, padding the tail to a whole frame so the last few milliseconds of a word survive. A synthesizer that stalls mid-clip costs the rest of that clip after `settings.tts.stall`, not a thread and a voice connection.
 
-**A clip waits for a head start** (`settings.tts.lead_ms`, 500 ms) before the first byte reaches the player.
+**A clip waits for a head start** (`settings.tts.lead`, 500 ms) before the first byte reaches the player.
 
 **Loudness is a deployment setting** (`PLAYBACK_VOLUME`, `1.0` by default). It scales every sample on its way to the player, so a chime is turned down with the words behind it, and it is applied at playback rather than folded into a rendered clip — changing it does not invalidate a cache full of phrases. Above `1.0` the result is clipped at full scale rather than allowed to wrap.
 
 <details class="why" markdown="1">
 <summary>Why a head start, and why clipping rather than wrapping</summary>
 
-Streaming is the contract, not a promise: a synthesizer is free to render a phrase whole before sending any of it, which makes the first chunk the slow one and every chunk after it instant. That is invisible for a clip that is only speech, and audible for one that opens with a chime — the flourish plays, and then the channel sits silent until the sentence it introduced arrives. Waiting for `lead_ms` of speech first moves the wait to before the chime, where nobody is listening yet.
+Streaming is the contract, not a promise: a synthesizer is free to render a phrase whole before sending any of it, which makes the first chunk the slow one and every chunk after it instant. That is invisible for a clip that is only speech, and audible for one that opens with a chime — the flourish plays, and then the channel sits silent until the sentence it introduced arrives. Waiting for `lead` of speech first moves the wait to before the chime, where nobody is listening yet.
 
 How loud a synthesizer renders a sentence has nothing to do with how loud a channel wants to be interrupted, which is why the volume is the deployment's. And int16 wraps to the opposite extreme, so a wrapped sample is a crack in the middle of a word rather than more of the same.
 
@@ -275,7 +275,7 @@ Packets are batched a tenth of a second at a time onto a thread rather than deco
 
 This is why **[`SPEECH_DIR` has to be a writable volume]({{ '/installation/#volumes' | relative_url }})**. Writes go through a temporary file and a rename, so a process killed mid-write cannot cache a truncated clip forever, and a clip is only stored once the synthesizer says it is whole.
 
-**The cache is reaped at startup** (`settings.tts.cache_retention_days`, 90 by default). Age is the **mtime**, not the filename, and every hit touches the file, so what is still in use stays however old it is. Everything in the directory is reaped, all of it being the cache's.
+**The cache is reaped at startup** (`settings.tts.cache_retention`, ninety days by default). Age is the **mtime**, not the filename, and every hit touches the file, so what is still in use stays however old it is. Everything in the directory is reaped, all of it being the cache's.
 
 **A phrase composed for one moment is not cached at all** — the `summary` tool's retelling. The cache is for phrases that come round again, and a sentence nobody will ever say twice is a large file on a retention clock only its own age will clear.
 

@@ -103,7 +103,7 @@ volumes:
 
 ### Kubernetes
 
-`config.yaml` is meant to be a ConfigMap, mounted at `/config/config.yaml`; the token is a Secret. Keep `settings.llm.timeout_seconds` well under `terminationGracePeriodSeconds` — a session sealed as the pod goes down is summarized inside the shutdown, so a whole LLM round trip runs inside the grace period and can be killed by it.
+`config.yaml` is meant to be a ConfigMap, mounted at `/config/config.yaml`; the token is a Secret. Keep `settings.llm.timeout` well under `terminationGracePeriodSeconds` — a session sealed as the pod goes down is summarized inside the shutdown, so a whole LLM round trip runs inside the grace period and can be killed by it.
 
 ```yaml
 apiVersion: apps/v1

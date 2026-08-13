@@ -24,8 +24,8 @@ from miss_quote.tools.base import ToolContext, Toolbox
 from miss_quote.tools.quotes import (
     ADDITIONAL_QUOTES_KEY,
     ANNOUNCEMENT_KEY,
-    ANSWER_SECONDS_KEY,
-    BACKOFF_SECONDS_KEY,
+    ANSWER_KEY,
+    BACKOFF_KEY,
     CATALOGUE_SIZE_KEY,
     CERTAIN,
     CHANCE_KEY,
@@ -37,16 +37,16 @@ from miss_quote.tools.quotes import (
     DEFAULT_SELF_ANSWER_PENALTY,
     DEFAULT_TIE_ANNOUNCEMENT,
     GENERATED_COUNT_KEY,
-    GENERATED_INTERVAL_SECONDS_KEY,
+    GENERATED_INTERVAL_KEY,
     GENERATED_KEY,
     IMPOSSIBLE,
     PENALIZE_SELF_ANSWERS_KEY,
-    QUIET_SECONDS_KEY,
+    QUIET_KEY,
     REMARKS_KEY,
     SELF_ANSWER_ANNOUNCEMENT_KEY,
     SELF_ANSWER_PENALTY_KEY,
     TIE_ANNOUNCEMENT_KEY,
-    TIE_SECONDS_KEY,
+    TIE_KEY,
     Quote,
     Quotes,
     RecentQuotes,
@@ -481,7 +481,7 @@ def _tool(
     settings = dict(config or {})
 
     if quiet is not None:
-        settings.setdefault(QUIET_SECONDS_KEY, quiet)
+        settings.setdefault(QUIET_KEY, quiet)
 
     box = Toolbox([board] if board is not None else [])
     context = ToolContext(
@@ -1414,7 +1414,7 @@ def test_the_window_comes_from_the_deployment(monkeypatch):
 
 def test_a_server_sets_its_own_window(quotes_file, speaker):
     """One room says the same six things all night and the next one does not."""
-    tool = _tool(speaker, config={BACKOFF_SECONDS_KEY: SHORT_WINDOW})
+    tool = _tool(speaker, config={BACKOFF_KEY: SHORT_WINDOW})
 
     assert tool._recent.window == SHORT_WINDOW
 
@@ -1433,7 +1433,7 @@ def test_a_server_window_wins_over_the_deployment(quotes_file, speaker, monkeypa
     monkeypatch.setattr(
         "miss_quote.tools.quotes.quotes_cfg", replace(quotes_cfg, backoff_seconds=SHORT_WINDOW)
     )
-    tool = _tool(speaker, config={BACKOFF_SECONDS_KEY: NO_BACKOFF})
+    tool = _tool(speaker, config={BACKOFF_KEY: NO_BACKOFF})
 
     assert tool._recent.window == NO_BACKOFF
 
@@ -1441,7 +1441,7 @@ def test_a_server_window_wins_over_the_deployment(quotes_file, speaker, monkeypa
 async def test_a_server_with_no_backoff_answers_every_time(
     quotes_file, speech, speaker
 ):
-    tool = _tool(speaker, config={BACKOFF_SECONDS_KEY: NO_BACKOFF})
+    tool = _tool(speaker, config={BACKOFF_KEY: NO_BACKOFF})
 
     await _hear(tool, TRIGGER)
     await _hear(tool, TRIGGER)
@@ -1450,8 +1450,8 @@ async def test_a_server_with_no_backoff_answers_every_time(
 
 
 def test_a_window_that_is_not_a_number_will_not_start(quotes_file, speaker):
-    with pytest.raises(ValueError, match=BACKOFF_SECONDS_KEY):
-        _tool(speaker, config={BACKOFF_SECONDS_KEY: "five minutes"})
+    with pytest.raises(ValueError, match=BACKOFF_KEY):
+        _tool(speaker, config={BACKOFF_KEY: "five minutes"})
 
 
 # ── answering only some of it ─────────────────────
@@ -1734,7 +1734,7 @@ async def test_no_quiet_window_says_the_line_where_it_was_heard(
 
 
 def test_the_quiet_window_comes_from_the_server(quotes_file, speech, speaker):
-    tool = _tool(speaker, config={QUIET_SECONDS_KEY: SHORT_WINDOW}, quiet=None)
+    tool = _tool(speaker, config={QUIET_KEY: SHORT_WINDOW}, quiet=None)
 
     assert tool._quiet == SHORT_WINDOW
 
@@ -1750,8 +1750,8 @@ def test_a_server_that_sets_no_quiet_window_gets_the_default(
 def test_a_quiet_window_that_is_not_a_number_will_not_start(
     quotes_file, speech, speaker
 ):
-    with pytest.raises(ValueError, match=QUIET_SECONDS_KEY):
-        _tool(speaker, config={QUIET_SECONDS_KEY: "a moment"})
+    with pytest.raises(ValueError, match=QUIET_KEY):
+        _tool(speaker, config={QUIET_KEY: "a moment"})
 
 
 # ── the pre-warm ──────────────────────────────────
@@ -1797,7 +1797,7 @@ async def test_both_wordings_of_the_award_are_warmed_per_name(
 async def test_no_award_is_warmed_where_nothing_is_being_asked(
     quotes_file, speech, speaker
 ):
-    tool = _tool(speaker, users=ROSTER, config={ANSWER_SECONDS_KEY: NO_WINDOW})
+    tool = _tool(speaker, users=ROSTER, config={ANSWER_KEY: NO_WINDOW})
 
     await _render(tool)
 
@@ -2517,7 +2517,7 @@ def test_a_negative_penalty_is_floored_at_nothing(quotes_file, speech, speaker):
 
 async def test_no_answer_window_asks_nothing(quotes_file, speech, speaker, board):
     """Which is what a deployment that wants the lines and not the game asks for."""
-    tool = _tool(speaker, config={ANSWER_SECONDS_KEY: NO_WINDOW}, board=board)
+    tool = _tool(speaker, config={ANSWER_KEY: NO_WINDOW}, board=board)
     await _quoted(tool)
 
     await _hear(tool, ANSWER)
@@ -2528,7 +2528,7 @@ async def test_no_answer_window_asks_nothing(quotes_file, speech, speaker, board
 def test_the_windows_come_from_the_server(quotes_file, speech, speaker):
     tool = _tool(
         speaker,
-        config={ANSWER_SECONDS_KEY: SHORT_WINDOW, TIE_SECONDS_KEY: TIE_WINDOW},
+        config={ANSWER_KEY: SHORT_WINDOW, TIE_KEY: TIE_WINDOW},
     )
 
     assert (tool._window, tool._tie) == (SHORT_WINDOW, TIE_WINDOW)
@@ -2544,8 +2544,8 @@ def test_a_server_that_sets_neither_window_gets_the_defaults(
 
 def test_a_window_that_is_not_a_number_will_not_start(quotes_file, speech, speaker):
     """A server that wrote a window down meant something by it."""
-    with pytest.raises(ValueError, match=ANSWER_SECONDS_KEY):
-        _tool(speaker, config={ANSWER_SECONDS_KEY: "five"})
+    with pytest.raises(ValueError, match=ANSWER_KEY):
+        _tool(speaker, config={ANSWER_KEY: "five"})
 
 
 # ── announcements the model writes ────────────────
@@ -2574,7 +2574,7 @@ def _generating(catalogue=GENERATED, **extra) -> dict:
     return {
         GENERATED_KEY: True,
         GENERATED_COUNT_KEY: DRAWN,
-        GENERATED_INTERVAL_SECONDS_KEY: DRAW_ONCE,
+        GENERATED_INTERVAL_KEY: DRAW_ONCE,
         **extra,
     }
 

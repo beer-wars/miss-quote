@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 import miss_quote.config as config_module
+from miss_quote.utils import duration
 
 FIRST_SERVER = 123456789012345678
 SECOND_SERVER = 876543210987654321
@@ -329,13 +330,13 @@ def test_settings_are_read_as_what_reads_them_wants(monkeypatch, tmp_path):
         monkeypatch,
         tmp_path,
         "settings:\n"
-        "  credits:\n    currency: penny\n    save_seconds: 2\n"
-        "  transcripts:\n    retention_days: '30'\n",
+        "  credits:\n    currency: penny\n    save: 2s\n"
+        "  transcripts:\n    retention: 30d\n",
     )
 
     assert cfg.setting("credits", "currency", "credit") == "penny"
-    assert cfg.setting("credits", "save_seconds", 5.0) == 2.0
-    assert cfg.setting("transcripts", "retention_days", -1) == 30
+    assert cfg.setting("credits", "save", 5.0) == 2.0
+    assert cfg.setting("transcripts", "retention", -1) == 30 * duration.DAY
     assert cfg.problems == ()
 
 
@@ -350,16 +351,16 @@ def test_an_unsaid_setting_is_the_default(monkeypatch, tmp_path):
 def test_an_empty_section_is_not_an_error(monkeypatch, tmp_path):
     cfg = _load(monkeypatch, tmp_path, "settings:\n  quotes:\n")
 
-    assert cfg.setting("quotes", "backoff_seconds", 300.0) == 300.0
+    assert cfg.setting("quotes", "backoff", 300.0) == 300.0
     assert cfg.problems == ()
 
 
 def test_a_value_that_will_not_parse_is_dropped_and_reported(monkeypatch, tmp_path):
     """A typo in a backoff must not be what stops the bot joining anything."""
-    cfg = _load(monkeypatch, tmp_path, "settings:\n  tts:\n    lead_ms: soon\n")
+    cfg = _load(monkeypatch, tmp_path, "settings:\n  tts:\n    lead: soon\n")
 
-    assert cfg.setting("tts", "lead_ms", 500.0) == 500.0
-    assert any("lead_ms" in problem for problem in cfg.problems)
+    assert cfg.setting("tts", "lead", 500.0) == 500.0
+    assert any("lead" in problem for problem in cfg.problems)
 
 
 def test_a_setting_nothing_reads_is_reported(monkeypatch, tmp_path):
@@ -370,7 +371,7 @@ def test_a_setting_nothing_reads_is_reported(monkeypatch, tmp_path):
 
 
 def test_a_section_nothing_reads_is_reported(monkeypatch, tmp_path):
-    cfg = _load(monkeypatch, tmp_path, "settings:\n  fine:\n    repeat_seconds: 9\n")
+    cfg = _load(monkeypatch, tmp_path, "settings:\n  fine:\n    repeat: 9\n")
 
     assert any("'fine'" in problem for problem in cfg.problems)
 
@@ -401,19 +402,19 @@ def test_the_llm_section_is_read(monkeypatch, tmp_path):
         monkeypatch,
         tmp_path,
         "settings:\n"
-        "  llm:\n    timeout_seconds: 60\n    max_output_tokens: 512\n    temperature: 0.2\n",
+        "  llm:\n    timeout: 1m\n    max_output_tokens: 512\n    temperature: 0.2\n",
     )
 
-    assert cfg.setting("llm", "timeout_seconds", 120.0) == 60.0
+    assert cfg.setting("llm", "timeout", 120.0) == 60.0
     assert cfg.setting("llm", "max_output_tokens", 1024) == 512
     assert cfg.setting("llm", "temperature", 0.7) == 0.2
     assert cfg.problems == ()
 
 
 def test_the_summaries_section_is_read(monkeypatch, tmp_path):
-    cfg = _load(monkeypatch, tmp_path, "settings:\n  summaries:\n    retention_days: 365\n")
+    cfg = _load(monkeypatch, tmp_path, "settings:\n  summaries:\n    retention: 365\n")
 
-    assert cfg.setting("summaries", "retention_days", -1) == 365
+    assert cfg.setting("summaries", "retention", -1) == 365
     assert cfg.problems == ()
 
 
@@ -421,11 +422,115 @@ def test_a_typo_in_the_new_sections_is_reported(monkeypatch, tmp_path):
     cfg = _load(
         monkeypatch,
         tmp_path,
-        "settings:\n  llm:\n    max_output_token: 512\n  summaries:\n    retention: 30\n",
+        "settings:\n  llm:\n    max_output_token: 512\n  summaries:\n    retention_days: 30\n",
     )
 
     assert any("max_output_token" in problem for problem in cfg.problems)
-    assert any("retention" in problem for problem in cfg.problems)
+    assert any("retention_days" in problem for problem in cfg.problems)
+
+
+# Every span the settings block holds, and what each is worth once parsed.
+EVERY_SPAN = """settings:
+  tts:
+    timeout: 30s
+    stall: 10s
+    lead: 500ms
+    hold_fade_in: 500ms
+    hold_fade_out: 2s
+    cache_retention: 90d
+  credits:
+    save: 5s
+    topic: 10s
+  fines:
+    repeat: 5s
+    recall: 10s
+    backoff: 5m
+    dampen: 1h
+  quotes:
+    backoff: 5m
+  transcripts:
+    retention: forever
+    resume: 5s
+  llm:
+    timeout: 2m
+  summaries:
+    retention: 1w
+"""
+
+PARSED_SPANS = {
+    ("tts", "timeout"): 30.0,
+    ("tts", "stall"): 10.0,
+    ("tts", "lead"): 0.5,
+    ("tts", "hold_fade_in"): 0.5,
+    ("tts", "hold_fade_out"): 2.0,
+    ("tts", "cache_retention"): 90 * duration.DAY,
+    ("credits", "save"): 5.0,
+    ("credits", "topic"): 10.0,
+    ("fines", "repeat"): 5.0,
+    ("fines", "recall"): 10.0,
+    ("fines", "backoff"): 5 * duration.MINUTE,
+    ("fines", "dampen"): duration.HOUR,
+    ("quotes", "backoff"): 5 * duration.MINUTE,
+    ("transcripts", "retention"): duration.NEVER,
+    ("transcripts", "resume"): 5.0,
+    ("llm", "timeout"): 2 * duration.MINUTE,
+    ("summaries", "retention"): duration.WEEK,
+}
+
+# The same file, written the way the names used to read. Each one is a span
+# nothing reads any more.
+RETIRED_NAMES = {
+    "tts": ("timeout_seconds", "stall_seconds", "lead_ms", "hold_fade_in_ms",
+            "hold_fade_out_ms", "cache_retention_days"),
+    "credits": ("save_seconds", "topic_seconds"),
+    "fines": ("repeat_seconds", "recall_seconds", "backoff_seconds", "dampen_seconds"),
+    "quotes": ("backoff_seconds",),
+    "transcripts": ("retention_days", "resume_seconds"),
+    "llm": ("timeout_seconds",),
+    "summaries": ("retention_days",),
+}
+
+# Far enough from every default that a value falling back to one is visible.
+UNMISTAKABLE = 4321
+
+
+def test_every_span_in_the_settings_block_is_read(monkeypatch, tmp_path):
+    """One file exercising the whole format, so a key wired up wrong is caught."""
+    cfg = _load(monkeypatch, tmp_path, EVERY_SPAN)
+
+    for (section, key), seconds in PARSED_SPANS.items():
+        assert cfg.setting(section, key, None) == seconds, f"{section}.{key}"
+
+    assert cfg.problems == ()
+
+
+def test_a_span_under_its_retired_name_is_reported_rather_than_read(
+    monkeypatch, tmp_path
+):
+    """
+    The guard against a quiet reinterpretation on upgrade.
+
+    A file still saying `cache_retention_days: 90` means ninety days by it, and
+    a bare number is now ninety seconds. Nothing reads the old name, so what it
+    gets is the complaint and the default rather than a reaper set three
+    thousand times too fast.
+    """
+    body = "settings:\n" + "".join(
+        f"  {section}:\n"
+        + "".join(f"    {name}: {UNMISTAKABLE}\n" for name in names)
+        for section, names in RETIRED_NAMES.items()
+    )
+
+    cfg = _load(monkeypatch, tmp_path, body)
+
+    for section, names in RETIRED_NAMES.items():
+        for name in names:
+            assert any(
+                name in problem for problem in cfg.problems
+            ), f"{section}.{name} went unreported"
+
+    for (section, key), seconds in PARSED_SPANS.items():
+        assert cfg.setting(section, key, seconds) == seconds
 
 
 def test_a_missing_file_leaves_every_setting_at_its_default(monkeypatch, tmp_path):
