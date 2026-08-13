@@ -13,6 +13,7 @@ import discord
 import discord.ext.voice_recv
 from discord.ext import commands
 
+from miss_quote.bot import settings
 from miss_quote.bot.announcer import DiscordAnnouncer
 from miss_quote.bot.audio_sink import STTAudioSink
 from miss_quote.bot.presence import DiscordPresence
@@ -40,13 +41,15 @@ LISTEN_WATCHDOG_INTERVAL_SECONDS = 15.0
 UNKNOWN_NAME = "unknown"
 UNKNOWN_ID = 0
 
-# Starting and stopping by hand, for a conversation the schedule did not cover
-# or one it did and nobody wanted kept. Administrator-only: what these decide is
-# whether everybody in the room is on the record.
-START_TRANSCRIBING_COMMAND = "start-transcribing"
-STOP_TRANSCRIBING_COMMAND = "stop-transcribing"
+# Everything a server can switch on or off without redeploying: which tools it
+# is running, and whether the open session is on the record. Administrator-only,
+# because what these decide is what the room is doing and whether everybody in
+# it is being written down.
+SETTINGS_COMMAND = "mq"
+SETTINGS_ALIAS = "miss-quote"
 
 NOT_IN_A_CHANNEL = "❌ I am not in a voice channel here."
+NOT_A_KNOWN_SERVER = "❌ This server is not one I am configured for."
 
 
 def source_for(channel: Any) -> Source:
@@ -731,48 +734,157 @@ class STTBot:
             await ctx.send("👋 Left the voice channel.")
             logger.info("Left voice channel.")
 
-        @bot.command(name=START_TRANSCRIBING_COMMAND)
+        @bot.command(name=SETTINGS_COMMAND, aliases=[SETTINGS_ALIAS])
         @commands.has_permissions(administrator=True)
-        async def cmd_start_transcribing(ctx: commands.Context) -> None:
-            """Put the session in the author's guild on the record."""
-            session = self._session_in(ctx)
-            if session is None:
-                await ctx.send(NOT_IN_A_CHANNEL)
+        async def cmd_settings(
+            ctx: commands.Context, path: str | None = None, *, said: str | None = None
+        ) -> None:
+            """
+            Read or change what this server is doing, for as long as the pod runs.
+
+            Written as one command taking a path rather than as a group with a
+            subcommand per tool, because a group would make `!mq quotes` a name
+            collision the moment a tool is called what a subcommand is called.
+            """
+            guild = ctx.guild
+            if guild is None or not file_cfg.knows(guild.id):
+                await ctx.send(NOT_A_KNOWN_SERVER)
                 return
 
+            if path is None:
+                await ctx.send(self._settings_listing(ctx, guild.id))
+                return
+
+            await ctx.send(await self._settings_answer(ctx, guild.id, path, said))
+
+        cmd_settings.error(self._refuse_without_permission)
+
+    # ── settings ──────────────────────────────────
+
+    def _settings_listing(self, ctx: commands.Context, guild_id: int) -> str:
+        """Every switch this server has, and what it is set to."""
+        rows = [settings.row_for(state) for state in self._tools.state(guild_id)]
+        rows.append(self._transcribing_row(ctx))
+
+        return settings.listing(rows)
+
+    def _transcribing_row(self, ctx: commands.Context) -> settings.Row:
+        """
+        Whether what is being said is being written down.
+
+        Reported against the session rather than the schedule, because the
+        schedule is what a session *started* as and this is what it is. A server
+        the bot is not sitting in has no session and so nothing to report, which
+        is not the same as being off the record.
+        """
+        session = self._session_in(ctx)
+
+        if session is None:
+            return settings.Row(settings.TRANSCRIBING, on=False, note="no open session")
+
+        return settings.Row(settings.TRANSCRIBING, on=session.capturing)
+
+    async def _settings_answer(
+        self, ctx: commands.Context, guild_id: int, path: str, said: str | None
+    ) -> str:
+        """
+        One switch read, or set to whatever was said after it.
+
+        The order matters: a value that reads as on or off is a switch, and
+        anything else is a setting's value. So `!mq quotes off` switches a tool
+        off and `!mq quotes.backoff_seconds 600` configures one, without either
+        needing a keyword to tell them apart.
+        """
+        target, key = settings.parse_path(path)
+
+        if target == settings.TRANSCRIBING:
+            return await self._set_transcribing(ctx, said)
+
+        if key is not None:
+            return await self._set_tool_config(guild_id, target, key, said)
+
+        return await self._set_tool(guild_id, target, said)
+
+    async def _set_tool(self, guild_id: int, name: str, said: str | None) -> str:
+        state = self._tools.status(guild_id, name)
+        if state is None or not state.known:
+            return f"❌ There is no tool named `{name}`."
+
+        if said is None:
+            return settings.listing([settings.row_for(state)])
+
+        wanted = settings.switch(said)
+        if wanted is None:
+            return f"❌ `{said}` is not on or off."
+
+        if wanted:
+            return "🔧 " + await self._tools.enable(guild_id, name)
+
+        return "🔧 " + await self._tools.disable(guild_id, name)
+
+    async def _set_tool_config(
+        self, guild_id: int, name: str, key: str, said: str | None
+    ) -> str:
+        """
+        One of a tool's own settings, read or replaced.
+
+        Reading is what the tool was built against rather than what it made of
+        it: a tool turns its config into compiled patterns and expanded stems,
+        and none of that is the value somebody wrote.
+        """
+        state = self._tools.status(guild_id, name)
+        if state is None or not state.known:
+            return f"❌ There is no tool named `{name}`."
+
+        if said is None:
+            written = self._tools.configured_value(guild_id, name, key)
+            if written is None:
+                return f"`{name}.{key}` is unset; the tool's own default applies."
+            return f"`{name}.{key}` is `{written!r}`."
+
+        return "🔧 " + await self._tools.reconfigure(
+            guild_id, name, key, settings.value(said)
+        )
+
+    async def _set_transcribing(self, ctx: commands.Context, said: str | None) -> str:
+        """
+        Whether the open session is on the record.
+
+        Both directions are deliberately one-way about what is already written:
+        starting keeps nothing said before it, because nothing said before it
+        was buffered anywhere, and stopping retracts nothing, because a decision
+        about what happens next is not a decision about what happened.
+        """
+        session = self._session_in(ctx)
+        if session is None:
+            return NOT_IN_A_CHANNEL
+
+        if said is None:
+            return settings.listing([self._transcribing_row(ctx)])
+
+        wanted = settings.switch(said)
+        if wanted is None:
+            return f"❌ `{said}` is not on or off."
+
+        if wanted:
             if not session.start_capturing():
-                await ctx.send("📝 Already transcribing this conversation.")
-                return
+                return "📝 Already transcribing this conversation."
 
             await self._refresh_presence()
-            await ctx.send(
-                "📝 Transcribing from here on. Nothing said before this was kept."
-            )
             logger.info(
-                "Transcription started by hand in %s.", session.source.relative_directory
+                "Transcription started by hand in %s.",
+                session.source.relative_directory,
             )
+            return "📝 Transcribing from here on. Nothing said before this was kept."
 
-        @bot.command(name=STOP_TRANSCRIBING_COMMAND)
-        @commands.has_permissions(administrator=True)
-        async def cmd_stop_transcribing(ctx: commands.Context) -> None:
-            """Take the session in the author's guild off the record."""
-            session = self._session_in(ctx)
-            if session is None:
-                await ctx.send(NOT_IN_A_CHANNEL)
-                return
+        if not session.stop_capturing():
+            return "🙊 Not transcribing this conversation."
 
-            if not session.stop_capturing():
-                await ctx.send("🙊 Not transcribing this conversation.")
-                return
-
-            await self._refresh_presence()
-            await ctx.send("🙊 Stopped transcribing. What was already written stays.")
-            logger.info(
-                "Transcription stopped by hand in %s.", session.source.relative_directory
-            )
-
-        for command in (cmd_start_transcribing, cmd_stop_transcribing):
-            command.error(self._refuse_without_permission)
+        await self._refresh_presence()
+        logger.info(
+            "Transcription stopped by hand in %s.", session.source.relative_directory
+        )
+        return "🙊 Stopped transcribing. What was already written stays."
 
     def _session_in(self, ctx: commands.Context) -> TranscriptSession | None:
         """

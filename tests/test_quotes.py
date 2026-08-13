@@ -1838,7 +1838,7 @@ async def test_the_runner_warms_a_configured_server(quotes_file, speech, speaker
     await runner.prewarm()
     running = runner.start()
     try:
-        for tool in runner._serving:
+        for tool in runner._serving.values():
             if isinstance(tool, Tts):
                 await tool.drained()
     finally:

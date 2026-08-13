@@ -28,7 +28,7 @@ miss-quote is a client. It does not transcribe, synthesize, or summarize anythin
 
 1. Create an application in the [Discord Developer Portal](https://discord.com/developers/applications) and add a bot to it.
 2. Copy the bot token — this becomes `DISCORD_TOKEN`.
-3. Enable **Message Content Intent** under *Bot → Privileged Gateway Intents*. The `!join` / `!leave` and `!start-transcribing` / `!stop-transcribing` commands do not work without it.
+3. Enable **Message Content Intent** under *Bot → Privileged Gateway Intents*. The `!join` / `!leave` and `!mq` commands do not work without it.
 4. Invite the bot with the scopes `bot` and `applications.commands`.
 
 ### Permissions

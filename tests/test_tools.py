@@ -240,6 +240,12 @@ def _only_tool(runner: ToolRunner, server_id: int, moment: str) -> Tool:
     return bucket[server_id][0]
 
 
+def _only_serving(runner: ToolRunner) -> Tool:
+    """The one tool with a run of its own, whatever it is keyed under."""
+    (tool,) = runner._serving.values()
+    return tool
+
+
 # ── construction ──────────────────────────────────
 
 
@@ -596,7 +602,7 @@ async def test_a_tool_that_only_runs_is_not_inert():
 
 async def test_a_tool_with_something_to_do_is_set_going():
     runner = ToolRunner(_servers(first={Serving.name: _enabled()}), {Serving.name: Serving})
-    tool = runner._serving[0]
+    tool = _only_serving(runner)
 
     tasks = runner.start()
 
@@ -625,7 +631,7 @@ async def test_nothing_is_set_going_twice():
     runner = ToolRunner(_servers(first={Serving.name: _enabled()}), {Serving.name: Serving})
     started = runner.start()
 
-    assert runner.start() is started
+    assert runner.start() == started
     for task in started:
         task.cancel()
 
@@ -652,7 +658,7 @@ async def test_a_tool_whose_run_raises_is_logged(caplog):
 
 async def test_a_tool_with_something_to_finish_is_closed():
     runner = ToolRunner(_servers(first={Serving.name: _enabled()}), {Serving.name: Serving})
-    tool = runner._serving[0]
+    tool = _only_serving(runner)
 
     await runner.close()
 
@@ -723,9 +729,11 @@ async def test_a_tool_reaches_one_built_after_it():
         _servers(first={Neighbourly.name: _enabled(), Serving.name: _enabled()}), registry
     )
 
-    assert list(runner._serving[0].tools._tools) == [
+    serving = _only_serving(runner)
+
+    assert list(serving.tools._tools) == [
         _only_tool(runner, FIRST_SERVER, "_on_utterance"),
-        runner._serving[0],
+        serving,
     ]
 
 
@@ -849,3 +857,323 @@ async def test_closing_stops_a_running_tool_first():
     await runner.close()
 
     assert all(task.done() for task in tasks)
+
+
+# ── switching ─────────────────────────────────────
+
+
+SETTING_KEY = "window_seconds"
+FILE_SETTING = 300.0
+ASKED_SETTING = 5.0
+IMPOSSIBLE_SETTING = -1.0
+
+
+class SecondRecorder(Recorder):
+    """A second tool of the same shape, for what happens to the one beside it."""
+
+    name = OTHER_TOOL_NAME
+
+
+class Fussy(Recorder):
+    """A tool that reads one setting and refuses a value it cannot work with."""
+
+    name = "fussy"
+
+    def __init__(self, context):
+        super().__init__(context)
+        self.window = context.config.get(SETTING_KEY, FILE_SETTING)
+
+        if self.window < 0:
+            raise ValueError("a window cannot run backwards")
+
+
+def _disabled(config: dict | None = None) -> ToolSettings:
+    return ToolSettings(enabled=False, config=config or {})
+
+
+def _state(runner: ToolRunner, name: str, server_id: int = FIRST_SERVER):
+    return runner.status(server_id, name)
+
+
+def _only_built(runner: ToolRunner) -> Tool | None:
+    """The one instance that exists, or nothing if none does."""
+    built = list(runner._built.values())
+    return built[0] if built else None
+
+
+async def test_a_tool_the_file_left_off_can_be_switched_on():
+    """The config block is read either way, so there is something to build from."""
+    runner = ToolRunner(
+        _servers(first={Fussy.name: _disabled({SETTING_KEY: ASKED_SETTING})}),
+        {Fussy.name: Fussy},
+    )
+
+    assert _only_built(runner) is None
+
+    await runner.enable(FIRST_SERVER, Fussy.name)
+    tool = _only_tool(runner, FIRST_SERVER, "_on_utterance")
+
+    assert tool.window == ASKED_SETTING
+
+
+async def test_a_tool_switched_off_hears_nothing():
+    runner = ToolRunner(_servers(first={TOOL_NAME: _enabled()}), {TOOL_NAME: Recorder})
+    tool = _only_tool(runner, FIRST_SERVER, "_on_utterance")
+
+    await runner.disable(FIRST_SERVER, TOOL_NAME)
+    await runner.dispatch_utterance(FakeSession(FIRST_SOURCE), _utterance())
+
+    assert tool.utterances == []
+    assert runner._on_utterance[FIRST_SERVER] == []
+
+
+async def test_a_tool_switched_back_on_is_the_one_that_left():
+    """Which is the whole reason an instance is kept rather than closed."""
+    runner = ToolRunner(_servers(first={TOOL_NAME: _enabled()}), {TOOL_NAME: Recorder})
+    tool = _only_tool(runner, FIRST_SERVER, "_on_utterance")
+    await runner.dispatch_utterance(FakeSession(FIRST_SOURCE), _utterance("before"))
+
+    await runner.disable(FIRST_SERVER, TOOL_NAME)
+    await runner.enable(FIRST_SERVER, TOOL_NAME)
+    await runner.dispatch_utterance(FakeSession(FIRST_SOURCE), _utterance("after"))
+
+    assert _only_tool(runner, FIRST_SERVER, "_on_utterance") is tool
+    assert [utterance.text for utterance in tool.utterances] == ["before", "after"]
+
+
+async def test_switching_a_tool_on_twice_dispatches_it_once():
+    """A tool filed twice is one announcement asked for and two announcements made."""
+    runner = ToolRunner(_servers(first={TOOL_NAME: _enabled()}), {TOOL_NAME: Recorder})
+
+    await runner.enable(FIRST_SERVER, TOOL_NAME)
+    await runner.dispatch_utterance(FakeSession(FIRST_SOURCE), _utterance())
+
+    assert len(runner._on_utterance[FIRST_SERVER]) == 1
+    assert len(_only_tool(runner, FIRST_SERVER, "_on_utterance").utterances) == 1
+
+
+async def test_a_tool_switched_off_stops_running():
+    runner = ToolRunner(_servers(first={Serving.name: _enabled()}), {Serving.name: Serving})
+    tool = _only_serving(runner)
+    runner.start()
+
+    async with asyncio.timeout(PATIENCE_SECONDS):
+        await tool.running.wait()
+
+    await runner.disable(FIRST_SERVER, Serving.name)
+
+    assert runner.running == ()
+
+
+async def test_a_tool_switched_on_after_the_rest_starts_running():
+    """Startup has already happened, so nothing else is going to start it."""
+    registry = {Serving.name: Serving}
+    runner = ToolRunner(_servers(first={Serving.name: _disabled()}), registry)
+    runner.start()
+
+    await runner.enable(FIRST_SERVER, Serving.name)
+    tool = _only_serving(runner)
+
+    async with asyncio.timeout(PATIENCE_SECONDS):
+        await tool.running.wait()
+
+    for task in runner.running:
+        task.cancel()
+
+
+async def test_switching_one_tool_off_leaves_another_alone():
+    runner = ToolRunner(
+        _servers(first={TOOL_NAME: _enabled(), OTHER_TOOL_NAME: _enabled()}),
+        {TOOL_NAME: Recorder, OTHER_TOOL_NAME: SecondRecorder},
+    )
+
+    await runner.disable(FIRST_SERVER, TOOL_NAME)
+    await runner.dispatch_utterance(FakeSession(FIRST_SOURCE), _utterance())
+
+    (left,) = runner._on_utterance[FIRST_SERVER]
+
+    assert left.name == OTHER_TOOL_NAME
+    assert len(left.utterances) == 1
+
+
+async def test_a_tool_switched_off_is_not_reachable_by_a_neighbour():
+    """The box is what a neighbour looks in, so leaving it is what off means."""
+    registry = {Neighbourly.name: Neighbourly, Serving.name: Serving}
+    runner = ToolRunner(
+        _servers(first={Neighbourly.name: _enabled(), Serving.name: _enabled()}), registry
+    )
+
+    await runner.disable(FIRST_SERVER, Serving.name)
+    await runner.dispatch_utterance(FakeSession(FIRST_SOURCE), _utterance())
+
+    assert _only_tool(runner, FIRST_SERVER, "_on_utterance").found == [None]
+
+
+async def test_a_tool_switched_off_is_still_closed_at_shutdown():
+    """A tally switched off halfway through an evening still has something to write."""
+    runner = ToolRunner(_servers(first={Serving.name: _enabled()}), {Serving.name: Serving})
+    tool = _only_serving(runner)
+
+    await runner.disable(FIRST_SERVER, Serving.name)
+    await runner.close()
+
+    assert tool.closed == 1
+
+
+async def test_a_name_nothing_answers_to_is_refused():
+    runner = ToolRunner(_servers(first={}), {TOOL_NAME: Recorder})
+
+    said = await runner.enable(FIRST_SERVER, "not-a-tool")
+
+    assert "no tool named" in said
+
+
+async def test_a_tool_that_will_not_build_says_why():
+    runner = ToolRunner(
+        _servers(first={Unbuildable.name: _disabled()}), {Unbuildable.name: Unbuildable}
+    )
+
+    said = await runner.enable(FIRST_SERVER, Unbuildable.name)
+
+    assert "missing something it needed" in said
+    assert _only_built(runner) is None
+
+
+async def test_a_tool_that_is_already_on_says_so():
+    runner = ToolRunner(_servers(first={TOOL_NAME: _enabled()}), {TOOL_NAME: Recorder})
+
+    assert "already on" in await runner.enable(FIRST_SERVER, TOOL_NAME)
+
+
+async def test_a_tool_that_is_already_off_says_so():
+    runner = ToolRunner(_servers(first={TOOL_NAME: _disabled()}), {TOOL_NAME: Recorder})
+
+    assert "already off" in await runner.disable(FIRST_SERVER, TOOL_NAME)
+
+
+async def test_a_circle_is_refused_rather_than_built():
+    """Found at startup it is a line in the report; found here it would be the process."""
+    registry = {Chicken.name: Chicken, Egg.name: Egg}
+    runner = ToolRunner(
+        _servers(first={Chicken.name: _enabled(), Egg.name: _disabled()}), registry
+    )
+
+    said = await runner.enable(FIRST_SERVER, Egg.name)
+
+    assert "circle" in said
+
+
+# ── what a server is doing ────────────────────────
+
+
+def test_every_tool_the_registry_knows_is_listed():
+    """Somebody asking what can be switched on is asking about all of them."""
+    runner = ToolRunner(
+        _servers(first={TOOL_NAME: _enabled()}),
+        {TOOL_NAME: Recorder, OTHER_TOOL_NAME: SecondRecorder},
+    )
+
+    assert [state.name for state in runner.state(FIRST_SERVER)] == sorted(
+        [TOOL_NAME, OTHER_TOOL_NAME]
+    )
+
+
+def test_a_name_the_registry_does_not_know_is_still_listed():
+    """It is in the file, somebody meant something by it, and a typo should say so."""
+    runner = ToolRunner(_servers(first={"mistyped": _enabled()}), {TOOL_NAME: Recorder})
+
+    assert not _state(runner, "mistyped").known
+
+
+async def test_a_switch_reports_itself_as_changed():
+    runner = ToolRunner(_servers(first={TOOL_NAME: _enabled()}), {TOOL_NAME: Recorder})
+
+    assert not _state(runner, TOOL_NAME).changed
+
+    await runner.disable(FIRST_SERVER, TOOL_NAME)
+    state = _state(runner, TOOL_NAME)
+
+    assert state.changed
+    assert state.configured
+    assert not state.on
+    assert state.built
+
+
+# ── configuring ───────────────────────────────────
+
+
+async def test_a_setting_is_read_back_as_it_was_written():
+    runner = ToolRunner(
+        _servers(first={Fussy.name: _enabled({SETTING_KEY: FILE_SETTING})}),
+        {Fussy.name: Fussy},
+    )
+
+    assert runner.configured_value(FIRST_SERVER, Fussy.name, SETTING_KEY) == FILE_SETTING
+
+
+async def test_a_setting_replaces_what_the_file_said():
+    runner = ToolRunner(
+        _servers(first={Fussy.name: _enabled({SETTING_KEY: FILE_SETTING})}),
+        {Fussy.name: Fussy},
+    )
+
+    await runner.reconfigure(FIRST_SERVER, Fussy.name, SETTING_KEY, ASKED_SETTING)
+
+    assert _only_tool(runner, FIRST_SERVER, "_on_utterance").window == ASKED_SETTING
+
+
+async def test_a_reconfigured_tool_is_a_new_one():
+    """It reads its config once, so a new value means a new instance and a clean slate."""
+    runner = ToolRunner(
+        _servers(first={Fussy.name: _enabled()}), {Fussy.name: Fussy}
+    )
+    before = _only_tool(runner, FIRST_SERVER, "_on_utterance")
+    await runner.dispatch_utterance(FakeSession(FIRST_SOURCE), _utterance())
+
+    await runner.reconfigure(FIRST_SERVER, Fussy.name, SETTING_KEY, ASKED_SETTING)
+    after = _only_tool(runner, FIRST_SERVER, "_on_utterance")
+
+    assert after is not before
+    assert after.utterances == []
+
+
+async def test_a_setting_the_tool_refuses_leaves_it_as_it_was():
+    runner = ToolRunner(
+        _servers(first={Fussy.name: _enabled({SETTING_KEY: FILE_SETTING})}),
+        {Fussy.name: Fussy},
+    )
+
+    said = await runner.reconfigure(
+        FIRST_SERVER, Fussy.name, SETTING_KEY, IMPOSSIBLE_SETTING
+    )
+
+    assert "backwards" in said
+    assert _only_tool(runner, FIRST_SERVER, "_on_utterance").window == FILE_SETTING
+    assert runner.configured_value(FIRST_SERVER, Fussy.name, SETTING_KEY) == FILE_SETTING
+
+
+async def test_configuring_a_tool_that_is_off_does_not_switch_it_on():
+    """A change to a setting is not a decision to start running something."""
+    runner = ToolRunner(
+        _servers(first={Fussy.name: _disabled()}), {Fussy.name: Fussy}
+    )
+
+    said = await runner.reconfigure(
+        FIRST_SERVER, Fussy.name, SETTING_KEY, ASKED_SETTING
+    )
+
+    assert not _state(runner, Fussy.name).on
+    assert runner._on_utterance.get(FIRST_SERVER, []) == []
+    assert "switched on" in said
+
+
+async def test_a_setting_written_while_a_tool_is_off_is_what_it_starts_with():
+    """Nothing was rebuilt, so the value waits rather than being read and discarded."""
+    runner = ToolRunner(
+        _servers(first={Fussy.name: _disabled()}), {Fussy.name: Fussy}
+    )
+
+    await runner.reconfigure(FIRST_SERVER, Fussy.name, SETTING_KEY, ASKED_SETTING)
+    await runner.enable(FIRST_SERVER, Fussy.name)
+
+    assert _only_tool(runner, FIRST_SERVER, "_on_utterance").window == ASKED_SETTING
