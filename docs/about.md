@@ -429,8 +429,7 @@ miss-quote/
 │       │   └── models/
 │       │       └── silero_vad.onnx  # Vendored (~2 MB)
 │       ├── llm/
-│       │   ├── client.py      # An OpenAI-compatible chat completion
-│       │   └── announcements.py  # Announcements the model writes for `quotes`
+│       │   └── client.py      # An OpenAI-compatible chat completion
 │       ├── ledger/
 │       │   └── credits.py     # What everybody has left, per server
 │       ├── resources/
@@ -441,6 +440,7 @@ miss-quote/
 │       │   ├── registry.py    # Tool names a config file can switch on
 │       │   ├── runner.py      # Per-server instances, dispatch, failure isolation
 │       │   ├── quotes.py      # Answers a trigger phrase with the line it belongs to
+│       │   ├── quotes_announcements.py  # Announcements the model writes for `quotes`
 │       │   ├── scoreboard.py  # The tally, to disk and to the channel topic
 │       │   ├── summary.py     # An account of a session, written down and read back
 │       │   ├── tts.py         # Says things out loud; the only thing that plays anything

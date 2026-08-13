@@ -2,8 +2,9 @@
 
 import pytest
 
-from miss_quote.llm import announcements
-from miss_quote.llm.announcements import (
+from miss_quote.llm.client import CompletionError
+from miss_quote.tools import quotes_announcements
+from miss_quote.tools.quotes_announcements import (
     BATCH_SIZE,
     CREDITS_FIELD,
     CREDITS_PLACEHOLDER,
@@ -17,7 +18,6 @@ from miss_quote.llm.announcements import (
     _usable,
     catalogue,
 )
-from miss_quote.llm.client import CompletionError
 
 # A sentence carrying both placeholders, which is the whole of what a usable
 # announcement has to be.
@@ -48,7 +48,7 @@ def _answering(monkeypatch, *replies: str) -> list[str]:
 
         return replies[min(len(asked) - 1, len(replies) - 1)]
 
-    monkeypatch.setattr(announcements, "complete", _complete)
+    monkeypatch.setattr(quotes_announcements, "complete", _complete)
 
     return asked
 
@@ -194,7 +194,7 @@ async def test_an_endpoint_that_refuses_yields_what_had_arrived(monkeypatch):
 
         return reply
 
-    monkeypatch.setattr(announcements, "complete", _complete)
+    monkeypatch.setattr(quotes_announcements, "complete", _complete)
 
     assert len(await catalogue(BATCH_SIZE * 2, EXAMPLES)) == BATCH_SIZE
 
@@ -203,7 +203,7 @@ async def test_an_endpoint_that_refuses_at_once_yields_nothing(monkeypatch):
     async def _complete(instruction, text):
         raise CompletionError("no endpoint is configured")
 
-    monkeypatch.setattr(announcements, "complete", _complete)
+    monkeypatch.setattr(quotes_announcements, "complete", _complete)
 
     assert await catalogue(BATCH_SIZE, EXAMPLES) == ()
 
@@ -218,8 +218,8 @@ def test_the_request_carries_the_shipped_endings_as_examples():
 
 def test_the_instruction_names_both_placeholders():
     """A model that was never told the spelling writes something else."""
-    assert USER_PLACEHOLDER in announcements.INSTRUCTION
-    assert CREDITS_PLACEHOLDER in announcements.INSTRUCTION
+    assert USER_PLACEHOLDER in quotes_announcements.INSTRUCTION
+    assert CREDITS_PLACEHOLDER in quotes_announcements.INSTRUCTION
 
 
 # ── the contract with the tool that fills them ────

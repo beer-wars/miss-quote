@@ -7,6 +7,11 @@ written inline at the point of use so that the two places a prompt is chosen —
 the summary and the retelling — are one word each in the config file, and so a
 server that wants a different wording writes it once and uses it in both.
 
+The file also carries `instructions:`, which nothing selects: standing briefs the
+code asks for by name, for the places a prompt is fixed rather than configured.
+They are loaded here because the file has one reader, and one reader is what
+keeps a fragment worth sharing shared.
+
 Prose lives in the YAML and the rules for filling it live here. The file carries
 the text, the fragments shared between prompts, and which prompt does each job
 when a channel does not say; this module carries the two substitutions and the
@@ -49,6 +54,7 @@ BUNDLED_PROMPTS = Path(__file__).resolve().parent.parent / "resources" / "prompt
 DEFAULTS_KEY = "defaults"
 FRAGMENTS_KEY = "fragments"
 PROMPTS_KEY = "prompts"
+INSTRUCTIONS_KEY = "instructions"
 SUMMARY_DEFAULT_KEY = "summary"
 RETELLING_DEFAULT_KEY = "retelling"
 
@@ -82,6 +88,7 @@ class Bundled:
     """The shipped file, parsed and checked."""
 
     prompts: Mapping[str, str]
+    instructions: Mapping[str, str]
     fragments: Mapping[str, str]
     summary: str
     retelling: str
@@ -125,10 +132,21 @@ def _load(path: Path) -> Bundled:
     filled = {name: _filled(text, fragments) for name, text in prompts.items()}
     _check_filled(path, filled)
 
+    # Not checked for anything left unfilled. The braces in a standing brief are
+    # the spelling it is telling the model to use, so the check that catches a
+    # misspelled fragment in a prompt would reject the instruction that names one.
+    instructions = {
+        name: _filled(text, fragments)
+        for name, text in _strings(
+            path, raw.get(INSTRUCTIONS_KEY) or {}, INSTRUCTIONS_KEY
+        ).items()
+    }
+
     defaults = raw.get(DEFAULTS_KEY) or {}
 
     return Bundled(
         prompts=filled,
+        instructions=instructions,
         fragments=fragments,
         summary=_default(path, defaults, SUMMARY_DEFAULT_KEY, filled),
         retelling=_default(path, defaults, RETELLING_DEFAULT_KEY, filled),
@@ -205,6 +223,30 @@ DEFAULT_SUMMARY_PROMPT = _BUNDLED.summary
 DEFAULT_RETELLING_PROMPT = _BUNDLED.retelling
 
 BUILTIN: Mapping[str, str] = _BUNDLED.prompts
+
+# The standing briefs, kept out of `library` on purpose: these are not wordings
+# for a job a channel chooses between, and one offered as a summary prompt is one
+# a config file can select and get nonsense from.
+INSTRUCTIONS: Mapping[str, str] = _BUNDLED.instructions
+
+
+def instruction(name: str) -> str:
+    """
+    One standing brief, as the code that sends it will hand it over.
+
+    Raises rather than falling back on a name nothing answers to. The file ships
+    inside the image, so a brief that is not in it is a broken build rather than
+    something a deployment wrote wrong, and the message wants to be the first
+    thing in the log rather than the last.
+    """
+    text = INSTRUCTIONS.get(name)
+    if text is None:
+        raise UnknownPrompt(
+            f"no instruction named '{name}' in {BUNDLED_PROMPTS}; there is "
+            f"{NAME_SEPARATOR.join(repr(known) for known in sorted(INSTRUCTIONS))}"
+        )
+
+    return text
 
 
 def library(extra: Mapping[str, str] | None = None) -> Mapping[str, str]:

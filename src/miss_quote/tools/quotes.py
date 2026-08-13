@@ -103,8 +103,8 @@ from urllib.parse import urlsplit
 import yaml
 
 from miss_quote.config import quotes_cfg, scoreboard_cfg
-from miss_quote.llm import announcements
 from miss_quote.llm import client as llm
+from miss_quote.tools import quotes_announcements
 from miss_quote.tools.base import Tool, ToolContext
 from miss_quote.tools.scoreboard import Scoreboard
 from miss_quote.tools.tts import Tts
@@ -796,7 +796,7 @@ class Quotes(Tool):
             return
 
         try:
-            self._catalogue = await announcements.catalogue(
+            self._catalogue = await quotes_announcements.catalogue(
                 self._catalogue_size, DEFAULT_REMARKS
             )
         except asyncio.CancelledError:
