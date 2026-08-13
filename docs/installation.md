@@ -28,7 +28,7 @@ miss-quote is a client. It does not transcribe, synthesize, or summarize anythin
 
 1. Create an application in the [Discord Developer Portal](https://discord.com/developers/applications) and add a bot to it.
 2. Copy the bot token — this becomes `DISCORD_TOKEN`.
-3. Enable **Message Content Intent** under *Bot → Privileged Gateway Intents*. The `!join` / `!leave` and `!mq` commands do not work without it.
+3. Enable **Message Content Intent** under *Bot → Privileged Gateway Intents*. The `!mq` commands do not work without it.
 4. Invite the bot with the scopes `bot` and `applications.commands`.
 
 ### Permissions
@@ -228,7 +228,7 @@ The lines worth looking for are the ones that say something is not going to happ
 
 | Symptom | Most likely cause |
 |---|---|
-| The bot never joins a channel | The server is not in `servers`, which is [a hard gate]({{ '/configuration/#servers' | relative_url }}). An unlisted server is never joined, by autojoin or by `!join` |
+| The bot never joins a channel | The server is not in `servers`, which is [a hard gate]({{ '/configuration/#servers' | relative_url }}). An unlisted server is never joined, by autojoin or by `!mq join` |
 | It joins, but no transcript file appears | The channel is not in a `summary` tool's [`monitored_channels`]({{ '/configuration/#which-channels' | relative_url }}), or that tool is not enabled for the server. **That mapping is the switch for writing to disk** — it is the most common cause of this |
 | A transcript appears, but only some evenings | A [`schedule`]({{ '/configuration/#writing-a-window' | relative_url }}) covers the room and the session opened outside a window. A window says when a session may *start*; one opened a minute early is off the record for its whole length |
 | Nothing is said out loud | The server has not enabled the [`tts`]({{ '/configuration/#tts-tool' | relative_url }}) tool. Every other tool speaks through it, and the log says so once at startup |
@@ -237,7 +237,7 @@ The lines worth looking for are the ones that say something is not going to happ
 | The standings never reach the voice channel | Missing **Set Voice Channel Status**, which is not Manage Channels |
 | A summary is empty or never arrives | A reasoning model spending its whole budget before the answer — see [on reasoning models]({{ '/configuration/#on-reasoning-models' | relative_url }}) |
 | Every phrase is slow, every time | No writable volume at `SPEECH_DIR`, so nothing is cached. Reported as an error at startup |
-| `!join` and the transcribe commands do nothing | **Message Content Intent** is off in the Developer Portal |
+| `!mq join` and the transcribe commands do nothing | **Message Content Intent** is off in the Developer Portal |
 
 ## Development
 

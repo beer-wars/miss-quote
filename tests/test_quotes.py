@@ -2593,7 +2593,7 @@ def _wrote(monkeypatch, catalogue=GENERATED) -> list[int]:
         asked.append(size)
         return tuple(catalogue)
 
-    monkeypatch.setattr("miss_quote.tools.quotes.announcements.catalogue", _catalogue)
+    monkeypatch.setattr("miss_quote.tools.quotes.quotes_announcements.catalogue", _catalogue)
 
     return asked
 
@@ -2834,7 +2834,7 @@ async def test_a_model_that_will_not_answer_costs_the_announcements_and_nothing_
     async def _raising(size, examples):
         raise RuntimeError("the endpoint is on fire")
 
-    monkeypatch.setattr("miss_quote.tools.quotes.announcements.catalogue", _raising)
+    monkeypatch.setattr("miss_quote.tools.quotes.quotes_announcements.catalogue", _raising)
     tool = _tool(speaker, users=ROSTER, config=_generating(), board=board, quiet=NO_WINDOW)
 
     await _drawn_set(tool)

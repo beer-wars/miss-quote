@@ -14,10 +14,11 @@
 # number is seconds.
 #
 # A span can be turned off three ways, which mean the same thing and read
-# differently depending on the setting: `forever`, `never`, 0, or a negative
-# span like `-1d`. A retention of `forever` keeps everything; a backoff of 0
-# answers every time. Note that `off` and `no` are *not* among them — YAML reads
-# both as booleans before the setting is ever parsed.
+# differently depending on the setting: a word — `forever`, `never`, or
+# `immediately` — 0, or a negative span like `-1d`. A retention of `forever`
+# keeps everything; a backoff of `never` answers every time; a wait of
+# `immediately` does not wait. Note that `off` and `no` are *not* among them —
+# YAML reads both as booleans before the setting is ever parsed.
 
 # Settings that apply to the whole deployment rather than to one server.
 #
@@ -267,7 +268,7 @@ settings:
 #
 # The ID appears here and nowhere else: transcript directories are named for the
 # alias, so renaming a server on Discord changes nothing. A server that is not
-# listed is never joined, by autojoin or by an explicit !join, and an empty
+# listed is never joined, by autojoin or by an explicit !mq join, and an empty
 # mapping means the bot joins nothing: recording a server it should not have is
 # not something you can take back.
 #

@@ -25,6 +25,10 @@ stops the deployment; see `tools.quotes._checked` for the other half of that
 distinction. An operator who wrote a stray brace has made a mistake worth
 refusing to start over. A model that wrote one has had an ordinary afternoon,
 and the tool has five other things to say.
+
+What the model is told is prose, so it lives with the rest of the prose in
+`resources/prompts.yaml` rather than in this file. What is here is the batching,
+the deduplication, and the rules for which of what came back can be said.
 """
 
 from __future__ import annotations
@@ -33,6 +37,7 @@ import re
 from collections.abc import Sequence
 
 from miss_quote.llm.client import CompletionError, complete
+from miss_quote.summary.prompts import instruction
 from miss_quote.utils.logging import get_logger
 from miss_quote.utils.phrases import normalized
 
@@ -40,8 +45,9 @@ logger = get_logger(__name__)
 
 # What a generated announcement may interpolate. These are the fields
 # `tools.quotes` fills when it says one, and they are named here rather than
-# imported from there because that module imports this one. `test_announcements`
-# holds the two to agreement.
+# imported from there because that module imports this one.
+# `test_quotes_announcements` holds the two to agreement, and the shipped brief
+# to spelling them out.
 USER_FIELD = "user"
 CREDITS_FIELD = "credits"
 REMARK_FIELD = "remark"
@@ -77,36 +83,12 @@ SURROUNDING_QUOTES = '"“”‘’\''
 LINE_SEPARATOR = "\n"
 EXAMPLE_SEPARATOR = "\n"
 
-INSTRUCTION = f"""
-You write one-sentence announcements for a Discord bot that runs a quote game in
-a voice channel. When somebody recognises a line from a film, a show, a game, or
-a book and names where it came from, the bot says one of these out loud to award
-them a credit.
+# The brief the model works from, under this name in the shipped prompts. Read at
+# import rather than per request: it does not change while the process runs, and
+# a file that does not carry it is a broken image worth failing on the way up.
+INSTRUCTION_NAME = "quotes_announcements"
 
-Write each announcement as a single complete sentence. Every one must contain
-the placeholder {USER_PLACEHOLDER} exactly once, where the winner's name goes,
-and the placeholder {CREDITS_PLACEHOLDER} exactly once, where the amount goes.
-Write those two placeholders exactly as they appear here, with the braces. Use no
-other placeholder and no other braces anywhere.
-
-{CREDITS_PLACEHOLDER} is replaced by an amount and its unit together, as in "1
-credit" — so write "you are awarded {CREDITS_PLACEHOLDER}" and never "you are
-awarded {CREDITS_PLACEHOLDER} credits", which would say the unit twice.
-
-Your reply is read aloud by a speech synthesizer, which reads every character it
-is given. That rules out Markdown of every kind: no asterisks, no underscores,
-no hash marks, no bullet points, no numbered lists, no headings, no emoji, and
-no quotation marks around the sentence. Write plain sentences and nothing else.
-
-The tone is dry, fond, and a little insulting — the bot is pleased with them and
-unwilling to say so straight. Never sincere, never mean. The joke is that
-recognising the line is both an achievement and an indictment of how they spent
-their twenties. Vary the shape of the sentences: not every one should open the
-same way or put the name in the same place.
-
-Reply with one announcement per line and nothing else. No preamble, no numbering,
-no blank lines between them, no commentary after them.
-"""
+INSTRUCTION = instruction(INSTRUCTION_NAME)
 
 
 async def catalogue(size: int, examples: Sequence[str]) -> tuple[str, ...]:

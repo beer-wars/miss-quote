@@ -27,6 +27,8 @@ TRANSCRIPT_FRAGMENT = "transcript_instructions"
 RETELLING_FRAGMENT = "retelling_instructions"
 CLOSING_FRAGMENT = "retelling_closing"
 
+ANNOUNCEMENTS = "quotes_announcements"
+
 
 def _resolved(name: str) -> str:
     return prompts.resolve(name, prompts.library(), WORDS)
@@ -170,6 +172,63 @@ def test_a_custom_retelling_prompt_is_told_the_same():
 
     assert RETELLING_FRAGMENT not in available["mine"]
     assert "single continuous story" in available["mine"]
+
+
+# ── standing instructions ─────────────────────
+
+
+def test_the_announcements_brief_names_both_placeholders():
+    """A model that was never told the spelling writes something else."""
+    said = prompts.instruction(ANNOUNCEMENTS)
+
+    assert "{user}" in said
+    assert "{credits}" in said
+
+
+def test_the_announcements_brief_forbids_what_a_synthesizer_would_read_aloud():
+    """Every announcement is said out loud, and an asterisk is a word to a synthesizer."""
+    said = prompts.instruction(ANNOUNCEMENTS).lower()
+
+    for forbidden in ("markdown", "asterisk", "bullet", "emoji", "quotation marks"):
+        assert forbidden in said, forbidden
+
+
+def test_an_instruction_is_not_something_a_server_can_select():
+    """A standing brief offered as a summary prompt is one a config file can pick."""
+    for name in prompts.INSTRUCTIONS:
+        assert name not in prompts.library(), name
+
+
+def test_an_instruction_nothing_answers_to_is_refused():
+    with pytest.raises(prompts.UnknownPrompt, match="no instruction named"):
+        prompts.instruction("nonexistent")
+
+
+def test_an_instruction_keeps_the_braces_it_was_written_with(tmp_path):
+    """They are the spelling it is telling the model to use, not something filled."""
+    written = _whole(instructions={ANNOUNCEMENTS: "Write {user} exactly."})
+    loaded = prompts._load(_written(tmp_path, **written))
+
+    assert loaded.instructions[ANNOUNCEMENTS] == "Write {user} exactly."
+
+
+def test_an_instruction_is_given_the_fragments_too(tmp_path):
+    written = _whole(instructions={ANNOUNCEMENTS: f"{{{TRANSCRIPT_FRAGMENT}}} Write one."})
+    loaded = prompts._load(_written(tmp_path, **written))
+
+    assert "A transcript." in loaded.instructions[ANNOUNCEMENTS]
+
+
+def test_a_file_with_no_instructions_is_read_anyway(tmp_path):
+    """Nothing in the file requires one, and a section nobody wrote is not an error."""
+    loaded = prompts._load(_written(tmp_path, **_whole()))
+
+    assert loaded.instructions == {}
+
+
+def test_an_instruction_that_is_not_text_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="must be text"):
+        prompts._load(_written(tmp_path, **_whole(instructions={ANNOUNCEMENTS: 5})))
 
 
 # ── the library ───────────────────────────────

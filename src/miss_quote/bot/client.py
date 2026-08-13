@@ -41,15 +41,29 @@ LISTEN_WATCHDOG_INTERVAL_SECONDS = 15.0
 UNKNOWN_NAME = "unknown"
 UNKNOWN_ID = 0
 
-# Everything a server can switch on or off without redeploying: which tools it
-# is running, and whether the open session is on the record. Administrator-only,
-# because what these decide is what the room is doing and whether everybody in
-# it is being written down.
-SETTINGS_COMMAND = "mq"
-SETTINGS_ALIAS = "miss-quote"
+# Everything anybody types at the bot, under one name: where it sits, which tools
+# a server is running, and whether the open session is on the record.
+COMMAND_NAME = "mq"
+COMMAND_ALIAS = "miss-quote"
+
+# The two words that are a thing to do rather than a settings path, and what `!mq`
+# taking a path rather than being a command group costs: a tool named either of
+# them would be unreachable from the command that switches tools on. Nothing stops
+# one being registered, so `test_presence` holds the registry to it.
+JOIN_VERB = "join"
+LEAVE_VERB = "leave"
+VOICE_VERBS = (JOIN_VERB, LEAVE_VERB)
 
 NOT_IN_A_CHANNEL = "❌ I am not in a voice channel here."
 NOT_A_KNOWN_SERVER = "❌ This server is not one I am configured for."
+
+# Which half of the command needs the permission. Coming and going is anybody's
+# to ask for — a room with autojoin off has no other way to be heard at all —
+# while what the tools are doing and who is on the record is not, because what
+# those decide is what the room is and whether everybody in it is written down.
+NEEDS_ADMINISTRATOR = (
+    "❌ Reading or changing what this server is doing needs Administrator."
+)
 
 
 def source_for(channel: Any) -> Source:
@@ -707,48 +721,38 @@ class STTBot:
     def _register_commands(self) -> None:
         bot = self._bot
 
-        @bot.command(name="join")
-        async def cmd_join(ctx: commands.Context) -> None:
-            """Join the author's voice channel and start listening."""
-            if not ctx.author.voice:
-                await ctx.send("❌ You are not in a voice channel.")
-                return
-
-            channel = ctx.author.voice.channel
-
-            if ctx.voice_client is not None:
-                await self._move(ctx.voice_client, channel)
-            else:
-                await self._connect(channel)
-
-            await ctx.send(f"🎙️ Joined **{channel}** — listening.")
-
-        @bot.command(name="leave")
-        async def cmd_leave(ctx: commands.Context) -> None:
-            """Leave the current voice channel."""
-            if not ctx.voice_client:
-                await ctx.send("❌ I am not in a voice channel.")
-                return
-
-            await self._disconnect(ctx.voice_client)
-            await ctx.send("👋 Left the voice channel.")
-            logger.info("Left voice channel.")
-
-        @bot.command(name=SETTINGS_COMMAND, aliases=[SETTINGS_ALIAS])
-        @commands.has_permissions(administrator=True)
-        async def cmd_settings(
+        @bot.command(name=COMMAND_NAME, aliases=[COMMAND_ALIAS])
+        async def cmd_mq(
             ctx: commands.Context, path: str | None = None, *, said: str | None = None
         ) -> None:
             """
-            Read or change what this server is doing, for as long as the pod runs.
+            Come here, go away, or read and change what this server is doing.
 
             Written as one command taking a path rather than as a group with a
             subcommand per tool, because a group would make `!mq quotes` a name
             collision the moment a tool is called what a subcommand is called.
+            The two voice verbs are what that costs: they are read before the path
+            is, so a tool named either of them could not be reached. The
+            permission sits on the settings half rather than on the command,
+            for the reason given where it is worded.
             """
             guild = ctx.guild
             if guild is None or not file_cfg.knows(guild.id):
                 await ctx.send(NOT_A_KNOWN_SERVER)
+                return
+
+            verb = path.strip().lower() if path is not None else None
+
+            if verb == JOIN_VERB:
+                await self._join(ctx)
+                return
+
+            if verb == LEAVE_VERB:
+                await self._leave(ctx)
+                return
+
+            if not ctx.permissions.administrator:
+                await ctx.send(NEEDS_ADMINISTRATOR)
                 return
 
             if path is None:
@@ -757,7 +761,38 @@ class STTBot:
 
             await ctx.send(await self._settings_answer(ctx, guild.id, path, said))
 
-        cmd_settings.error(self._refuse_without_permission)
+    # ── coming and going ──────────────────────────
+
+    async def _join(self, ctx: commands.Context) -> None:
+        """
+        Join the asker's voice channel and start listening.
+
+        Theirs rather than a named one: the bot holds one connection per server,
+        and somebody who is not in the room asking it into a room is how a channel
+        gets a bot nobody in it invited.
+        """
+        if not ctx.author.voice:
+            await ctx.send("❌ You are not in a voice channel.")
+            return
+
+        channel = ctx.author.voice.channel
+
+        if ctx.voice_client is not None:
+            await self._move(ctx.voice_client, channel)
+        else:
+            await self._connect(channel)
+
+        await ctx.send(f"🎙️ Joined **{channel}** — listening.")
+
+    async def _leave(self, ctx: commands.Context) -> None:
+        """Leave the channel it is in, closing the session it was writing."""
+        if not ctx.voice_client:
+            await ctx.send(NOT_IN_A_CHANNEL)
+            return
+
+        await self._disconnect(ctx.voice_client)
+        await ctx.send("👋 Left the voice channel.")
+        logger.info("Left voice channel.")
 
     # ── settings ──────────────────────────────────
 
@@ -900,18 +935,3 @@ class STTBot:
 
         return self._sessions.get(getattr(channel, "id", UNKNOWN_ID))
 
-    @staticmethod
-    async def _refuse_without_permission(ctx: commands.Context, error: Exception) -> None:
-        """
-        Say no out loud, for the one refusal these commands can produce.
-
-        A command that does nothing and says nothing is one somebody keeps
-        trying. Anything else is re-raised rather than swallowed, so a real
-        failure still reaches the log it would have reached.
-        """
-        if not isinstance(error, commands.MissingPermissions):
-            raise error
-
-        await ctx.send(
-            f"❌ `{ctx.prefix}{ctx.invoked_with}` needs Administrator on this server."
-        )

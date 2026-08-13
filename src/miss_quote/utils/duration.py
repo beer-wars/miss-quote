@@ -57,10 +57,17 @@ UNITS: dict[str, float] = {
     "w": WEEK,
 }
 
-# Turning one off, in words. `off` and `no` are deliberately absent: YAML reads
-# both as booleans, so a file saying `retention: off` hands this a `False` that
-# never reaches a keyword lookup. These two are safe in every YAML spelling.
-FOREVER = ("forever", "never")
+# Turning one off, in words. All three are the same nothing and differ only in
+# which setting they read correctly on: a retention of `forever` keeps
+# everything, a backoff of `never` answers every time, a wait of `immediately`
+# does not wait. `off` and `no` are deliberately absent: YAML reads both as
+# booleans, so a file saying `retention: off` hands this a `False` that never
+# reaches a keyword lookup. These three are safe in every YAML spelling.
+KEYWORDS = ("forever", "never", "immediately")
+
+# Which of them a span of nothing reads back as. `spoken` is reporting a window
+# rather than a wait nearly every time, and it has no way to tell which it has.
+SPOKEN_KEYWORD = KEYWORDS[0]
 
 SIGN = "-"
 
@@ -92,6 +99,12 @@ SCALES: tuple[tuple[float, str], ...] = (
 COUNT_FORMAT = "%g"
 SINGULAR = 1
 
+# How a complaint lists the words it will take instead of the one it was given.
+LIST_SEPARATOR = ", "
+CONJUNCTION = "or"
+SPACE = " "
+PAIR = 2
+
 
 def parse(value: Any) -> float:
     """
@@ -105,7 +118,7 @@ def parse(value: Any) -> float:
     if isinstance(value, bool):
         raise ValueError(
             f"{value!r} is not a duration; to turn one off write "
-            f"{_or(FOREVER)}, 0, or a negative span like '-1d'"
+            f"{_or(KEYWORDS)}, 0, or a negative span like '-1d'"
         )
 
     if isinstance(value, (int, float)):
@@ -115,7 +128,7 @@ def parse(value: Any) -> float:
     if not text:
         raise ValueError("a duration cannot be blank")
 
-    if text in FOREVER:
+    if text in KEYWORDS:
         return NEVER
 
     negative = text.startswith(SIGN)
@@ -136,7 +149,7 @@ def spoken(seconds: float) -> str:
     number whose unit the reader has to know already.
     """
     if seconds <= NEVER:
-        return FOREVER[0]
+        return SPOKEN_KEYWORD
 
     for scale, name in SCALES:
         if seconds >= scale:
@@ -163,7 +176,7 @@ def _bare(text: str) -> float:
     except ValueError as exc:
         raise ValueError(
             f"{text!r} is not a duration; write one like '30s', '5m', or "
-            f"'1h30m', a bare number of seconds, or {_or(FOREVER)}"
+            f"'1h30m', a bare number of seconds, or {_or(KEYWORDS)}"
         ) from exc
 
 
@@ -172,5 +185,17 @@ def _counted(count: float, name: str) -> str:
 
 
 def _or(words: tuple[str, ...]) -> str:
-    """The keywords, listed the way a complaint offers them."""
-    return " or ".join(repr(word) for word in words)
+    """
+    The keywords, listed the way a complaint offers them.
+
+    A pair reads without the comma and three or more read with it, so a message
+    somebody is reading in a startup log is a sentence rather than a run of
+    alternatives strung together.
+    """
+    written = [repr(word) for word in words]
+    if len(written) < PAIR:
+        return SPACE.join(written)
+
+    separator = LIST_SEPARATOR if len(written) > PAIR else SPACE
+
+    return f"{LIST_SEPARATOR.join(written[:-1])}{separator}{CONJUNCTION} {written[-1]}"
