@@ -286,6 +286,12 @@ servers:
     # opted in, and what settings the tool is handed. A tool listed without
     # `enabled: true` is off, and a name no tool answers to is reported at
     # startup and skipped.
+    #
+    # This is what the server *starts* as. `!mq quotes off` switches one off for
+    # as long as the pod runs, and `!mq` lists what each of them is doing; a tool
+    # written here as `enabled: false` can be switched on later, because its
+    # config below is read either way. Nothing typed at the bot is written back
+    # here, so a restart is what returns the server to this file.
     tools:
       # Answers out loud with a film line when someone says the phrase that sets
       # it off, and then asks the channel where the line came from.
@@ -602,7 +608,7 @@ servers:
               # schedule is written by somebody narrowing what is recorded, and
               # a typo in it must not widen it back out.
               #
-              # `!start-transcribing` overrides this for one session, including
+              # `!mq transcribing on` overrides this for one session, including
               # in a room that named no windows at all.
               #
               # A window is also what makes several sessions one thing to write

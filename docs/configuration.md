@@ -118,6 +118,61 @@ Discord nicknames are freely editable and often not a name at all, which makes t
 
 Two tools that require each other are a circle, reported at startup and **left unbuilt** — see [the tool contract]({{ '/about/#one-tool-calling-another' | relative_url }}).
 
+Everything in this block is what the server **starts** as. `!mq` changes what it is doing now, without a restart and without touching the file; see [switching things on and off](#switching).
+
+## Switching things on and off {#switching}
+
+`!mq` reads and changes what one server is doing right now. `!miss-quote` is the same command written out. **It requires Administrator on the server**, and it refuses any server not listed under `servers`.
+
+| Command | Effect |
+|---|---|
+| `!mq` | Lists every tool, whether it is on, and whether that is still what the file says. The record is listed with them |
+| `!mq quotes` | Says whether one tool is on |
+| `!mq quotes off` | Switches a tool off. `off`, `false`, `no` and `0` all mean this |
+| `!mq quotes on` | Switches a tool on. `on`, `true`, `yes` and `1` all mean this |
+| `!mq quotes.backoff_seconds` | Says what one of a tool's own settings was built against |
+| `!mq quotes.backoff_seconds 600` | Sets it, and rebuilds the tool around it |
+| `!mq transcribing on` | Puts the open session on the record — see [starting and stopping by hand]({{ '/about/#starting-and-stopping-by-hand' | relative_url }}) |
+
+**Nothing here is written down.** A restart goes back to `config.yaml`, which is why `!mq` lists what the file says beside anything that no longer matches it:
+
+```
+quotes             on
+scoreboard         on
+summary            off  file says on
+tts                on
+verbal-morality    on
+transcribing       on
+```
+
+**A tool switched off keeps everything it knew.** It hears nothing, no other tool can reach it, and whatever it was running of its own stops — but the instance survives, so switching it back on restores the backoff windows, the round in progress, and the running tally intact.
+
+**Setting one of a tool's own settings rebuilds it, and a rebuilt tool has forgotten all of that.** A tool reads its config once and turns it into compiled patterns and expanded word stems, so a new value means a new instance. A value the tool refuses leaves the running one exactly as it was, and says what it objected to.
+
+A tool the file never enabled can still be switched on, provided its `config:` block is there to build from — `enabled: false` with settings underneath is read either way. One that needs config it has not got reports what it wanted rather than starting broken.
+
+<details class="why" markdown="1">
+<summary>Why nothing is persisted</summary>
+
+The file is a deployment's considered answer and a message in a channel is somebody's answer to this evening. Letting the second overwrite the first would make the state of a deployment the sum of every command anybody had ever typed at it, discoverable only by asking the bot — which is exactly the failure the `servers` block is written the way it is to avoid.
+
+So the file wins every restart, and the cost is that an evening's arrangement has to be typed again if the pod moves. That is the right way round: a change worth keeping is worth writing down, and one that is not should not outlive the reason for it.
+
+It also keeps the blast radius small. There is no write path to the ConfigMap, no reconciliation to lose, and nothing a mistyped command can do that restarting the pod does not undo.
+
+</details>
+
+<details class="why" markdown="1">
+<summary>Why a tool is kept rather than closed</summary>
+
+Switching `verbal-morality` off for twenty minutes and back on should not hand everybody a clean slate — the backoff exists precisely so that a room which has been swearing all evening gets quieter announcements, and rebuilding it would reward whoever asked for the break.
+
+The same reasoning runs the other way for a setting: changing `backoff_seconds` is a decision about how the tool should behave from now on, and carrying the old windows across a change to the window length would mean neither value described what was happening. So one is a pause and the other is a replacement, deliberately.
+
+The exception is shutdown, where a tool that was switched off is still given its chance to write itself out. A tally switched off halfway through an evening has counted things somebody wants kept.
+
+</details>
+
 ## Tools {#tools}
 
 Five tools ship. A name nothing answers to is reported at startup and skipped, the registry being a closed list rather than whatever happens to be importable.
@@ -512,7 +567,7 @@ A transcript is one **connection** to a voice channel, and a room produces sever
 - **Which occurrence a session belongs to is decided by when it opened.** A window says when a sitting may start, not how long it may run, so a session opening at 23:40 inside `Wed 17:00-00:00` and sealing at 01:20 is part of Wednesday's evening.
 - **Overlapping windows count as one stretch**, from earliest start to latest end. Back-to-back windows (`Wed 17:00-00:00` and `Thu 00:00-02:00`) are separate sittings, the interval being half-open.
 - **`minimum_utterances` is measured against the whole sitting**, so two visits of three lines are a conversation where either alone would not be. A session that wrote nothing down triggers no rewrite.
-- **Outside a window, nothing changes.** A session opened by `!start-transcribing`, or in a deployment with no schedule at all, is summarized on its own under its own name.
+- **Outside a window, nothing changes.** A session opened by `!mq transcribing on`, or in a deployment with no schedule at all, is summarized on its own under its own name.
 
 **The first message of an account is pinned**, and that is how an evening is found. An account that still fits its messages is rewritten in place; one that has outgrown them is posted again whole and the old run deleted, which takes its own pin off the list.
 

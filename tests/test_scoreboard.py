@@ -503,7 +503,7 @@ def test_a_board_runs_and_watches_for_a_join_rather_than_listening(ledger):
 
     assert runner.describe() == {SERVER: (Scoreboard.name,)}
     assert runner.problems == []
-    assert [type(tool) for tool in runner._serving] == [Scoreboard]
+    assert [type(tool) for tool in runner._serving.values()] == [Scoreboard]
     assert [type(tool) for tool in runner._on_joined[SERVER_ID]] == [Scoreboard]
     assert runner._on_utterance == {}
 
@@ -518,7 +518,7 @@ async def test_the_runner_puts_a_board_up_on_the_channel_it_joined(ledger, topic
 
 async def test_the_runner_closes_a_board(ledger, path):
     runner = ToolRunner(_servers(), {Scoreboard.name: Scoreboard})
-    runner._serving[0].debit(ELI_ID, ELI, ONE_CREDIT)
+    next(iter(runner._serving.values())).debit(ELI_ID, ELI, ONE_CREDIT)
 
     await runner.close()
 

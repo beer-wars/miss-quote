@@ -383,6 +383,22 @@ class Toolbox:
     def add(self, tool: Tool) -> None:
         self._tools.append(tool)
 
+    def remove(self, tool: Tool) -> None:
+        """
+        Take a tool back out, for every view of the box at once.
+
+        The list is shared rather than copied, so a tool switched off stops
+        being found by its neighbours as well as by the dispatcher — which is
+        the whole of what switching it off means. A neighbour that reaches for
+        it then gets the same None it would have got from a server that never
+        enabled it.
+
+        A tool that is not in the box is not an error. Asking twice is the
+        ordinary shape of a switch.
+        """
+        if tool in self._tools:
+            self._tools.remove(tool)
+
     def find(self, kind: type[Found]) -> Found | None:
         """
         The server's instance of one kind of tool, or None if it has none.

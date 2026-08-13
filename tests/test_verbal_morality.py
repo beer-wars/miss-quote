@@ -1794,7 +1794,7 @@ async def test_the_runner_warms_a_configured_server(speech, speaker):
 
 async def _drained(runner: ToolRunner) -> None:
     """Wait out every renderer the runner started."""
-    for tool in runner._serving:
+    for tool in runner._serving.values():
         if isinstance(tool, Tts):
             await tool.drained()
 
