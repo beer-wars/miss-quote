@@ -9,8 +9,11 @@ from discord.ext import commands
 
 import miss_quote.bot.client as client_module
 import miss_quote.transcript.writer as writer_module
+from miss_quote.bot import settings
+from miss_quote.bot.client import SETTINGS_COMMAND
 from miss_quote.bot.presence import DiscordPresence
-from miss_quote.config import FileConfig, ServerConfig, transcript_cfg
+from miss_quote.config import FileConfig, ServerConfig, ToolSettings, transcript_cfg
+from miss_quote.tools.base import Tool
 from miss_quote.tools.runner import ToolRunner
 from miss_quote.transcript.schedule import ALWAYS, Schedule
 from miss_quote.transcript.writer import TranscriptWriter
@@ -115,12 +118,18 @@ class FakeProcessor:
 class FakeContext:
     """Enough of a command context for the callbacks and the permission check."""
 
-    def __init__(self, voice_client=None, administrator: bool = True) -> None:
+    def __init__(
+        self,
+        voice_client=None,
+        administrator: bool = True,
+        guild_id: int = SERVER,
+    ) -> None:
         self.voice_client = voice_client
+        self.guild = type("Guild", (), {"id": guild_id, "name": "Somewhere"})()
         self.permissions = type("Permissions", (), {"administrator": administrator})()
         self.sent = []
         self.prefix = "!"
-        self.invoked_with = "start-transcribing"
+        self.invoked_with = SETTINGS_COMMAND
 
     async def send(self, message: str) -> None:
         self.sent.append(message)
@@ -210,10 +219,15 @@ async def test_empty_wording_turns_the_signal_off():
 def make_bot(monkeypatch, tmp_path):
     """An STTBot writing to tmp_path, with its presence recorded rather than sent."""
 
-    def _build(schedule: Schedule = ALWAYS, resume: float = NO_RESUMING):
+    def _build(
+        schedule: Schedule = ALWAYS,
+        resume: float = NO_RESUMING,
+        tools: dict | None = None,
+        registry: dict | None = None,
+    ):
         config = FileConfig(
             path=Path("/config/config.yaml"),
-            servers={SERVER: ServerConfig(alias=ALIAS, users={}, tools={})},
+            servers={SERVER: ServerConfig(alias=ALIAS, users={}, tools=tools or {})},
             problems=(),
             found=True,
         )
@@ -238,7 +252,7 @@ def make_bot(monkeypatch, tmp_path):
             client_module,
             "ToolRunner",
             lambda speaker, topic, announcer, ticker: ToolRunner(
-                config.servers, {}, speaker, topic, announcer, ticker
+                config.servers, registry or {}, speaker, topic, announcer, ticker
             ),
         )
         monkeypatch.setattr(client_module, "STTProcessor", FakeProcessor)
@@ -329,6 +343,13 @@ def _command(bot, name: str):
     return bot._bot.get_command(name)
 
 
+async def _transcribing(bot, ctx, said: str | None = None):
+    """`!mq transcribing [on|off]`, as the callback sees it."""
+    await _command(bot, SETTINGS_COMMAND).callback(
+        ctx, settings.TRANSCRIBING, said=said
+    )
+
+
 async def test_start_transcribing_puts_a_session_on_the_record(make_bot, frozen_clock):
     frozen_clock(OUTSIDE)
     bot = make_bot(schedule=EVENING)
@@ -339,7 +360,7 @@ async def test_start_transcribing_puts_a_session_on_the_record(make_bot, frozen_
     assert not session.capturing
 
     ctx = FakeContext(voice_client=channel.voice_client)
-    await _command(bot, "start-transcribing").callback(ctx)
+    await _transcribing(bot, ctx, "on")
 
     assert session.capturing
     assert bot._presence.states[-1] is True
@@ -356,9 +377,7 @@ async def test_start_transcribing_does_not_backfill(make_bot, frozen_clock):
     session = bot._sessions[CHANNEL_ID]
     session.write(USER_ID, USER, "before the command")
 
-    await _command(bot, "start-transcribing").callback(
-        FakeContext(voice_client=channel.voice_client)
-    )
+    await _transcribing(bot, FakeContext(voice_client=channel.voice_client), "on")
     session.write(USER_ID, USER, "after the command")
 
     assert [utterance.text for utterance in session.close().read()] == [
@@ -376,9 +395,7 @@ async def test_stop_transcribing_keeps_what_was_already_written(make_bot, frozen
     session = bot._sessions[CHANNEL_ID]
     session.write(USER_ID, USER, "on the record")
 
-    await _command(bot, "stop-transcribing").callback(
-        FakeContext(voice_client=channel.voice_client)
-    )
+    await _transcribing(bot, FakeContext(voice_client=channel.voice_client), "off")
     session.write(USER_ID, USER, "after the command")
 
     assert not session.capturing
@@ -394,7 +411,7 @@ async def test_asking_twice_says_so_and_changes_nothing(make_bot, frozen_clock):
 
     published = len(bot._presence.states)
     ctx = FakeContext(voice_client=channel.voice_client)
-    await _command(bot, "start-transcribing").callback(ctx)
+    await _transcribing(bot, ctx, "on")
 
     assert bot._sessions[CHANNEL_ID].capturing
     assert len(bot._presence.states) == published
@@ -405,16 +422,39 @@ async def test_the_commands_say_so_when_the_bot_is_in_no_channel(make_bot):
     bot = make_bot()
     ctx = FakeContext(voice_client=None)
 
-    await _command(bot, "stop-transcribing").callback(ctx)
+    await _transcribing(bot, ctx, "off")
 
     assert ctx.sent == [client_module.NOT_IN_A_CHANNEL]
 
 
-@pytest.mark.parametrize("name", ["start-transcribing", "stop-transcribing"])
-async def test_the_commands_need_administrator(make_bot, name):
-    """What these decide is whether everybody in the room is on the record."""
+async def test_transcribing_reads_back_without_a_value(make_bot, frozen_clock):
+    """Asking is not the same as asking for it to change."""
+    frozen_clock(OUTSIDE)
+    bot = make_bot(schedule=EVENING)
+    channel = FakeChannel()
+    await bot._connect(channel)
+
+    ctx = FakeContext(voice_client=channel.voice_client)
+    await _transcribing(bot, ctx)
+
+    assert not bot._sessions[CHANNEL_ID].capturing
+    assert settings.OFF in ctx.sent[0]
+
+
+async def test_a_server_that_is_not_known_is_refused(make_bot):
+    """The same gate joining one goes through, for the same reason."""
     bot = make_bot()
-    checks = _command(bot, name).checks
+    ctx = FakeContext(guild_id=SERVER + 1)
+
+    await _command(bot, SETTINGS_COMMAND).callback(ctx)
+
+    assert ctx.sent == [client_module.NOT_A_KNOWN_SERVER]
+
+
+async def test_the_command_needs_administrator(make_bot):
+    """What it decides is what the room is doing and who is on the record."""
+    bot = make_bot()
+    checks = _command(bot, SETTINGS_COMMAND).checks
 
     assert checks
 
@@ -423,11 +463,19 @@ async def test_the_commands_need_administrator(make_bot, name):
             check(FakeContext(administrator=False))
 
 
-@pytest.mark.parametrize("name", ["start-transcribing", "stop-transcribing"])
-async def test_an_administrator_passes_the_check(make_bot, name):
+async def test_an_administrator_passes_the_check(make_bot):
     bot = make_bot()
 
-    assert all(check(FakeContext()) for check in _command(bot, name).checks)
+    assert all(check(FakeContext()) for check in _command(bot, SETTINGS_COMMAND).checks)
+
+
+async def test_the_long_name_reaches_the_same_command(make_bot):
+    """`!miss-quote` for anybody who would rather write it out."""
+    bot = make_bot()
+
+    assert _command(bot, client_module.SETTINGS_ALIAS) is _command(
+        bot, SETTINGS_COMMAND
+    )
 
 
 async def test_a_refusal_is_said_out_loud(make_bot):
@@ -446,3 +494,113 @@ async def test_anything_else_is_re_raised(make_bot):
 
     with pytest.raises(RuntimeError):
         await bot._refuse_without_permission(FakeContext(), RuntimeError("something else"))
+
+
+# ── the tools a server is running ─────────────────
+
+
+class Listening(Tool):
+    """A tool that hears things, so switching it off is something to observe."""
+
+    name = "listening"
+
+    def __init__(self, context):
+        super().__init__(context)
+        self.heard = []
+
+    async def handle_utterance(self, utterance, session) -> None:
+        self.heard.append(utterance)
+
+
+def _running(bot):
+    return {tool.name for tool in bot._tools._on_utterance.get(SERVER, [])}
+
+
+async def _settings(bot, ctx, path: str | None = None, said: str | None = None):
+    await _command(bot, SETTINGS_COMMAND).callback(ctx, path, said=said)
+
+
+def _with_listening(make_bot, enabled: bool = True):
+    return make_bot(
+        tools={Listening.name: ToolSettings(enabled=enabled, config={})},
+        registry={Listening.name: Listening},
+    )
+
+
+async def test_a_bare_command_lists_what_the_server_is_doing(make_bot):
+    bot = _with_listening(make_bot)
+    ctx = FakeContext()
+
+    await _settings(bot, ctx)
+
+    assert Listening.name in ctx.sent[0]
+    assert settings.TRANSCRIBING in ctx.sent[0]
+
+
+async def test_a_tool_is_switched_off_by_name(make_bot):
+    bot = _with_listening(make_bot)
+    ctx = FakeContext()
+
+    await _settings(bot, ctx, Listening.name, settings.OFF)
+
+    assert _running(bot) == set()
+    assert Listening.name in ctx.sent[0]
+
+
+async def test_a_tool_is_switched_back_on_by_name(make_bot):
+    bot = _with_listening(make_bot, enabled=False)
+    ctx = FakeContext()
+
+    await _settings(bot, ctx, Listening.name, settings.ON)
+
+    assert _running(bot) == {Listening.name}
+
+
+async def test_a_tool_named_without_a_value_is_read_rather_than_changed(make_bot):
+    bot = _with_listening(make_bot)
+    ctx = FakeContext()
+
+    await _settings(bot, ctx, Listening.name)
+
+    assert _running(bot) == {Listening.name}
+    assert settings.ON in ctx.sent[0]
+
+
+async def test_a_value_that_is_not_a_switch_is_refused(make_bot):
+    bot = _with_listening(make_bot)
+    ctx = FakeContext()
+
+    await _settings(bot, ctx, Listening.name, "sideways")
+
+    assert _running(bot) == {Listening.name}
+    assert "not on or off" in ctx.sent[0]
+
+
+async def test_a_tool_nothing_answers_to_is_refused(make_bot):
+    bot = _with_listening(make_bot)
+    ctx = FakeContext()
+
+    await _settings(bot, ctx, "not-a-tool", settings.OFF)
+
+    assert "no tool named" in ctx.sent[0]
+
+
+async def test_one_of_a_tools_own_settings_is_read_back(make_bot):
+    bot = make_bot(
+        tools={Listening.name: ToolSettings(enabled=True, config={"window": 300})},
+        registry={Listening.name: Listening},
+    )
+    ctx = FakeContext()
+
+    await _settings(bot, ctx, f"{Listening.name}.window")
+
+    assert "300" in ctx.sent[0]
+
+
+async def test_one_of_a_tools_own_settings_is_set(make_bot):
+    bot = _with_listening(make_bot)
+    ctx = FakeContext()
+
+    await _settings(bot, ctx, f"{Listening.name}.window", "5")
+
+    assert bot._tools.configured_value(SERVER, Listening.name, "window") == 5

@@ -133,7 +133,7 @@ Guild and channel are not repeated in the line, the path already carrying them. 
 
 **A window is when an evening may *start* being recorded, not how long it may run.** The schedule is read once per session, when the bot joins, and the answer holds until the session seals — so a session that opens inside a window keeps writing until everybody disconnects, however far past the end of it.
 
-The rule runs the other way too, and that is the part worth knowing before setting one. **A session opened a minute early is off the record for its whole length**, and so is one opened by a rejoin after a pod restart at two in the morning. Leaving the channel and coming back opens a new session, which is what fixes both; so does `!start-transcribing`.
+The rule runs the other way too, and that is the part worth knowing before setting one. **A session opened a minute early is off the record for its whole length**, and so is one opened by a rejoin after a pod restart at two in the morning. Leaving the channel and coming back opens a new session, which is what fixes both; so does `!mq transcribing on`.
 
 **A window is also what says several sessions were one evening** — see [one evening, several sessions]({{ '/configuration/#one-evening-several-sessions' | relative_url }}).
 
@@ -152,14 +152,17 @@ Every room on the record is listed at startup, and an off-the-record session is 
 
 ### Starting and stopping by hand
 
-Two commands override the capture schedule for the session the bot is currently in, for an evening it did not cover, a room it does not list, or one it does that nobody wanted kept:
+`!mq transcribing` overrides the capture schedule for the session the bot is currently in, for an evening it did not cover, a room it does not list, or one it does that nobody wanted kept:
 
 | Command | Effect |
 |---|---|
-| `!start-transcribing` | Puts the open session on the record **from here on**. Nothing said before it was buffered anywhere, so there is nothing to backfill — this starts a transcript rather than completing one. Works in a room that is not in `monitored_channels` at all, which is the only way to record one |
-| `!stop-transcribing` | Takes the open session off the record. **What is already written stays written**; stopping is a decision about what happens next, not a retraction. A session that never wrote anything still takes its own file away when it seals |
+| `!mq transcribing on` | Puts the open session on the record **from here on**. Nothing said before it was buffered anywhere, so there is nothing to backfill — this starts a transcript rather than completing one. Works in a room that is not in `monitored_channels` at all, which is the only way to record one |
+| `!mq transcribing off` | Takes the open session off the record. **What is already written stays written**; stopping is a decision about what happens next, not a retraction. A session that never wrote anything still takes its own file away when it seals |
+| `!mq transcribing` | Says which of the two it currently is |
 
-**Both require Administrator on the server**, since what they decide is whether everybody in the room is on the record. A refusal is said out loud rather than silently ignored — a rule nobody is told about is one everybody keeps testing.
+**It requires Administrator on the server**, since what it decides is whether everybody in the room is on the record. A refusal is said out loud rather than silently ignored — a rule nobody is told about is one everybody keeps testing.
+
+The same command switches this server's tools on and off; see [switching things on and off]({{ '/configuration/#switching' | relative_url }}).
 
 **The override dies with the session.** Rejoining opens a new one, which consults the schedule afresh. It does survive a resume-window reconnect, since that is the same session.
 
