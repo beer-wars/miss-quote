@@ -76,6 +76,16 @@ class Tts(Tool):
 
     # ── speaking ──────────────────────────────────
 
+    def connected(self, source: Source) -> bool:
+        """
+        Whether there is a voice connection to that server to speak into.
+
+        For a tool weighing up work rather than one about to play something:
+        every other tool reaches the speaker through this one, so this is where
+        they ask. See `base.Speaker.connected`.
+        """
+        return self._speaker.connected(source)
+
     async def play(
         self,
         source: Source,

@@ -10,6 +10,7 @@ import pytest
 import miss_quote.bot.speaker as speaker_module
 from miss_quote.audio.gain import scaled
 from miss_quote.bot.speaker import DiscordSpeaker, OpusStream, PCMStream
+from miss_quote.tools.base import SilentSpeaker
 from miss_quote.config import audio_cfg
 from miss_quote.transcript.writer import Source
 
@@ -389,3 +390,34 @@ def test_a_stalled_encoder_ends_the_encoded_clip(caplog):
         assert stream.read() == b""
 
     assert "No audio" in caplog.text
+
+
+# ── being somewhere at all ────────────────────────
+
+
+def test_a_connected_server_is_reported_as_joined():
+    """What a tool asks before preparing an hour's worth of speech for a room."""
+    assert _speaker(FakeVoiceClient()).connected(SOURCE)
+
+
+def test_a_disconnected_server_is_not():
+    assert not _speaker(FakeVoiceClient(connected=False)).connected(SOURCE)
+
+
+def test_a_server_the_bot_was_never_in_is_not():
+    assert not DiscordSpeaker(lambda guild_id: None).connected(SOURCE)
+
+
+def test_being_in_another_room_still_counts_as_being_somewhere():
+    """
+    The server rather than the channel.
+
+    A bot that moved between rooms is still somewhere worth having speech ready
+    for, and where a particular clip may go is a narrower question `play` asks
+    itself later.
+    """
+    assert _speaker(FakeVoiceClient(channel_id=OTHER_CHANNEL_ID)).connected(SOURCE)
+
+
+def test_a_speaker_with_nowhere_to_play_is_never_connected():
+    assert not SilentSpeaker().connected(SOURCE)

@@ -101,6 +101,25 @@ class Speaker(Protocol):
         """
         ...
 
+    def connected(self, source: Source) -> bool:
+        """
+        Whether there is a voice connection to that server at all.
+
+        For a tool deciding whether work is worth doing rather than one about to
+        do it: rendering an hour's worth of speech for a room the bot left is
+        paying a synthesizer for silence.
+
+        Asked rather than remembered, and that is the point of it being here. A
+        tool is told when the bot joins a channel and never when it leaves, so
+        anything keeping its own flag is wrong from the first `!leave` onwards.
+
+        The server rather than the channel. A bot that moved between rooms is
+        still somewhere worth having speech ready for, and this is not the check
+        that decides where a clip goes; `play` makes that one itself, later,
+        when it knows what it is about to send.
+        """
+        ...
+
 
 class SilentSpeaker:
     """
@@ -116,6 +135,10 @@ class SilentSpeaker:
         self, source: Source, audio: AsyncIterator[bytes], scale: float = UNITY_VOLUME
     ) -> None:
         logger.debug("Nothing to play through for %s; dropping a clip.", source.channel)
+
+    def connected(self, source: Source) -> bool:
+        """Never, which is the truthful answer for a speaker with nowhere to play."""
+        return False
 
 
 @runtime_checkable

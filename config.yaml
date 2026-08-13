@@ -369,6 +369,47 @@ servers:
           #   - having watched it more recently than is respectable.
           #   - reasons that are between you and your search history.
 
+          # Whether to have the model write announcements of its own, drawn on
+          # beside the endings above rather than instead of them. Off unless
+          # asked for: it spends tokens at the endpoint `settings.llm` points
+          # at, and enabling a quote game should not quietly start a bill.
+          #
+          # Needs `LLM_API_BASE` and `LLM_MODEL`. With no endpoint answering,
+          # rounds are announced with the wordings the tool ships with and the
+          # log says so once.
+          #
+          # generated_point_responses: false
+
+          # How many the model is asked for. Written once, on the way up, and
+          # held for the life of the process — the model is the slowest thing
+          # this talks to, so it is spent in one burst while nobody is waiting
+          # and then left alone.
+          #
+          # generated_catalogue_size: 50
+
+          # How many of that catalogue are live at a time, against the six the
+          # tool ships with. Roughly even odds of hearing a generated one.
+          #
+          # generated_response_count: 5
+
+          # How often a fresh set is drawn from the catalogue. A draw renders
+          # what it picked before making it live, so nothing is ever said that
+          # was not already synthesized.
+          #
+          # Only ever drawn while the bot is in a voice channel: a server
+          # nobody is sitting in costs a sleeping task and nothing else. 0
+          # draws one set for the run and never again.
+          #
+          # Every announcement names the winner, so a draw renders
+          # `generated_response_count` phrases per person on the roster above.
+          # They are kept for `settings.tts.cache_retention_days` (90 by
+          # default), and each restart writes a fresh catalogue — a bot
+          # restarted daily leaves a few thousand clips behind before the
+          # reaper starts clearing them. Shorten that retention, or lengthen
+          # this, on a deployment where the speech volume is tight.
+          #
+          # generated_interval_seconds: 3600
+
           # Whether whoever set a line off is barred from naming it. They have
           # the trigger and the title in front of them and had to recall
           # neither, so a round they can win is one anybody can farm by reading
