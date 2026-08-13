@@ -426,7 +426,8 @@ miss-quote/
 │       │   └── models/
 │       │       └── silero_vad.onnx  # Vendored (~2 MB)
 │       ├── llm/
-│       │   └── client.py      # An OpenAI-compatible chat completion
+│       │   ├── client.py      # An OpenAI-compatible chat completion
+│       │   └── announcements.py  # Announcements the model writes for `quotes`
 │       ├── ledger/
 │       │   └── credits.py     # What everybody has left, per server
 │       ├── resources/

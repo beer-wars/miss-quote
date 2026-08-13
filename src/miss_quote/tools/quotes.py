@@ -103,10 +103,12 @@ from urllib.parse import urlsplit
 import yaml
 
 from miss_quote.config import quotes_cfg, scoreboard_cfg
+from miss_quote.llm import announcements
+from miss_quote.llm import client as llm
 from miss_quote.tools.base import Tool, ToolContext
 from miss_quote.tools.scoreboard import Scoreboard
 from miss_quote.tools.tts import Tts
-from miss_quote.transcript.writer import TranscriptSession, Utterance
+from miss_quote.transcript.writer import Source, TranscriptSession, Utterance
 from miss_quote.utils.logging import get_logger
 from miss_quote.utils.phrases import NOTHING, WORD_BOUNDARY, normalized, pattern
 from miss_quote.utils.stems import plural
@@ -303,6 +305,37 @@ DEFAULT_REMARKS = (
     "spending your formative years exactly as you did.",
 )
 
+# Endings a model wrote, drawn on beside the ones above rather than instead of
+# them. Off unless a server asks: it is a running cost at an endpoint the
+# deployment pays for, and a tool that quietly started spending somebody's
+# tokens because they enabled a quote game would be a surprise.
+#
+# The catalogue is written once, at startup, and held for the life of the
+# process; a few of it are rendered and live at a time, redrawn on the interval.
+# Splitting the two is what keeps the model out of the running deployment: a
+# server saying something new every hour costs one burst of generation on the
+# way up and nothing at all thereafter.
+GENERATED_KEY = "generated_point_responses"
+CATALOGUE_SIZE_KEY = "generated_catalogue_size"
+GENERATED_COUNT_KEY = "generated_response_count"
+GENERATED_INTERVAL_SECONDS_KEY = "generated_interval_seconds"
+
+GENERATION_OFF = False
+
+# The floor under any of the counts below, so a negative asks for none rather
+# than giving `random.sample` something to raise about.
+NOTHING_AT_ALL = 0
+
+# Enough that an hour's draw is unlikely to repeat the last one, and few enough
+# that the whole catalogue is rendered after a day or so and every draw after
+# that is a filesystem read.
+DEFAULT_CATALOGUE_SIZE = 50
+
+# How many are live at a time, against the six the tool ships with. Roughly
+# even odds of hearing a generated one, which is the point of having them.
+DEFAULT_GENERATED_COUNT = 5
+DEFAULT_GENERATED_INTERVAL_SECONDS = 3600.0
+
 CREDITS_FIELD = "credits"
 FIELD_SEPARATOR = ", "
 
@@ -363,6 +396,23 @@ class Entry:
     # Where the answers were written, which is the only place left to point at
     # for a trigger that lists none.
     where: str
+
+
+@dataclass(frozen=True)
+class Saying:
+    """
+    One way an announcement can come out: a template, and the ending it takes.
+
+    The two travel together because neither is the whole answer. A wording is
+    drawn once and then rendered twice — at the pre-warm and at the moment
+    somebody wins — and the pair is what has to be the same both times.
+
+    A generated announcement is a whole sentence and takes no ending, so it
+    carries an empty one rather than being a second kind of thing.
+    """
+
+    template: str
+    remark: str
 
 
 @dataclass(frozen=True)
@@ -596,6 +646,34 @@ class Quotes(Tool):
             for key, default in DEFAULT_ANNOUNCEMENTS.items()
         }
         self._remarks = _remarks(config.get(REMARKS_KEY))
+        self._generating = bool(config.get(GENERATED_KEY, GENERATION_OFF))
+        self._catalogue_size = _count(
+            CATALOGUE_SIZE_KEY, config.get(CATALOGUE_SIZE_KEY), DEFAULT_CATALOGUE_SIZE
+        )
+        self._generated_count = _count(
+            GENERATED_COUNT_KEY, config.get(GENERATED_COUNT_KEY), DEFAULT_GENERATED_COUNT
+        )
+        self._generated_interval = _seconds(
+            GENERATED_INTERVAL_SECONDS_KEY,
+            config.get(GENERATED_INTERVAL_SECONDS_KEY),
+            DEFAULT_GENERATED_INTERVAL_SECONDS,
+        )
+
+        # What the model wrote, and the few of it that are rendered and live.
+        # Both empty until the loop has been round once, which is what makes the
+        # pre-warm's job unchanged and every path below safe before it has.
+        self._catalogue: tuple[str, ...] = ()
+        self._generated: tuple[str, ...] = ()
+
+        # Held while a draw is being rendered, so a channel joined on the same
+        # tick as the clock came round does not pay for two of them.
+        self._rotating = asyncio.Lock()
+
+        # Where the bot was last seen, which is the only thing a tool is told
+        # about being in a voice channel. Asked of the speaker rather than
+        # trusted; see `_rotate`.
+        self._joined: Source | None = None
+
         self._policing = bool(
             config.get(PENALIZE_SELF_ANSWERS_KEY, PENALIZE_SELF_ANSWERS)
         )
@@ -691,6 +769,158 @@ class Quotes(Tool):
             _counted(self._quotes),
             len(names),
         )
+
+    # ── generated announcements ───────────────────
+
+    async def run(self) -> None:
+        """
+        Write a catalogue of announcements, and draw from it on a clock.
+
+        The generation is one burst on the way up and never again. A model is
+        the slowest thing this process talks to and the one nothing can queue
+        behind, so it is spent while nobody is waiting and then left alone; what
+        happens every hour after that is a draw from what it already said, which
+        costs a random number and some synthesis.
+
+        Not in `prewarm`, deliberately. The runner warms tools one after another,
+        and a batched generation can run to minutes — long enough to hold up
+        every other tool's warm-up on the box for the sake of a joke nobody has
+        heard yet. This starts alongside them and blocks nobody.
+
+        A draw that raises is logged and the loop carries on, on the same terms
+        as the scoreboard's: the previous draw is still rendered and still live,
+        and the next hour will try again.
+        """
+        if not self._generating:
+            return
+
+        try:
+            self._catalogue = await announcements.catalogue(
+                self._catalogue_size, DEFAULT_REMARKS
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "[%s] Could not write a catalogue of announcements: %s",
+                self.server,
+                exc,
+                exc_info=exc,
+            )
+
+        if not self._catalogue:
+            logger.warning(
+                "[%s] '%s' is on and the model wrote nothing usable, so rounds will "
+                "be announced with the wordings the tool ships with. Check that the "
+                "endpoint is configured and answering.",
+                self.server,
+                GENERATED_KEY,
+            )
+            return
+
+        while True:
+            try:
+                await self._rotate()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error(
+                    "[%s] Could not draw a set of announcements: %s",
+                    self.server,
+                    exc,
+                    exc_info=exc,
+                )
+
+            # A server that turned the interval off wanted one set for the run.
+            if self._generated_interval <= NEVER:
+                return
+
+            await asyncio.sleep(self._generated_interval)
+
+    async def handle_joined(self, source: Source) -> None:
+        """
+        Note where the bot is, and draw a first set if there is not one yet.
+
+        The join is what makes a draw possible at all: nothing is rendered while
+        the bot is out of every channel, so a process that came up to an empty
+        server has a catalogue and nothing drawn from it. Without this the room
+        somebody joins at eight would wait until the top of the hour to hear
+        anything the model wrote.
+
+        A join when a set is already live changes nothing. The bot moving
+        between rooms is not a reason to redraw, and the clock is still keeping
+        whatever cadence the server asked for.
+        """
+        self._joined = source
+
+        await self._rotate(only_if_idle=True)
+
+    async def _rotate(self, *, only_if_idle: bool = False) -> None:
+        """
+        Draw a set of announcements from the catalogue and render them.
+
+        Nothing happens unless the bot is in a voice channel. A draw is an hour
+        of synthesis for a room that may be empty, and the phrases would age out
+        of the cache having never been said; a server nobody is sitting in
+        should cost a sleeping task and nothing else.
+
+        Asked of the speaker rather than remembered. A tool hears about joins
+        and never about departures, so `self._joined` says where the bot was
+        last seen and only the speaker knows whether it is still there.
+
+        **The swap comes after the rendering, not before.** A generated
+        announcement that goes live unrendered is four seconds of silence the
+        first time it comes up, which is the whole thing the pre-warm exists to
+        prevent. The previous set stays live for as long as the new one takes.
+        """
+        if not self._catalogue:
+            return
+
+        speech = self._tts()
+        source = self._joined
+
+        if speech is None or source is None or not speech.connected(source):
+            return
+
+        async with self._rotating:
+            # Checked inside the lock as well: a join landing on the same tick
+            # as the clock is two callers, and the one that wanted a set only if
+            # there was none may find the other has just made one.
+            if only_if_idle and self._generated:
+                return
+
+            drawn = _selection(self._catalogue, self._generated_count)
+            names = sorted(set(self.users.values()))
+            wordings = [
+                self._wording(name, ANNOUNCEMENT_KEY, Saying(text, NOTHING))
+                for text in drawn
+                for name in names
+            ]
+
+            queued = speech.enqueue(wordings)
+            await speech.drained()
+
+            self._generated = drawn
+
+        logger.info(
+            "[%s] Drew %d announcement(s) from a catalogue of %d; %d phrase(s) had "
+            "to be rendered.",
+            self.server,
+            len(drawn),
+            len(self._catalogue),
+            queued,
+        )
+
+    async def close(self) -> None:
+        """
+        Let go of the connection to the model.
+
+        Only where this server asked for one. The session is the process's
+        rather than the tool's and `close` is idempotent, so a deployment where
+        both this and the summary tool used it is two calls and one close.
+        """
+        if self._generating:
+            await llm.close()
 
     @staticmethod
     def _wordings(quote: Quote, names: Sequence[str]) -> tuple[str, ...]:
@@ -929,23 +1159,25 @@ class Quotes(Tool):
         await speech.play(session.source, wording)
 
     def _wording(
-        self, user: str, key: str = ANNOUNCEMENT_KEY, remark: str | None = None
+        self, user: str, key: str = ANNOUNCEMENT_KEY, saying: Saying | None = None
     ) -> str:
         """
         One announcement as it will be said, for one person.
 
-        The remark is drawn afresh unless one is named, which is what the
-        pre-warm does to walk every ending rather than gambling on which one
-        comes up. The two render through here for exactly that reason: they must
-        agree down to the character, and a phrase that differs by a space is one
-        that was synthesized at startup and then synthesized again on the way to
-        being played.
+        The wording is drawn afresh unless one is named, which is what the
+        pre-warm does to walk every way a round can be announced rather than
+        gambling on which one comes up. The two render through here for exactly
+        that reason: they must agree down to the character, and a phrase that
+        differs by a space is one that was synthesized at startup and then
+        synthesized again on the way to being played.
         """
-        return self._announcements[key].format(
+        drawn = _chosen(self._choices(key)) if saying is None else saying
+
+        return drawn.template.format(
             **{
                 USER_FIELD: user,
                 CREDITS_FIELD: _denominated(self._stake(key)),
-                REMARK_FIELD: _chosen(self._remarks) if remark is None else remark,
+                REMARK_FIELD: drawn.remark,
             }
         )
 
@@ -964,9 +1196,9 @@ class Quotes(Tool):
         is one phrase however many the server has written.
         """
         return tuple(
-            self._wording(name, key, remark)
+            self._wording(name, key, saying)
             for key in self._sayable()
-            for remark in self._endings(key)
+            for saying in self._choices(key)
         )
 
     def _sayable(self) -> tuple[str, ...]:
@@ -984,12 +1216,37 @@ class Quotes(Tool):
             key for key in DEFAULT_ANNOUNCEMENTS if key != SELF_ANSWER_ANNOUNCEMENT_KEY
         )
 
-    def _endings(self, key: str) -> tuple[str, ...]:
-        """The remarks one wording can take, or a single blank where it takes none."""
-        if REMARK_PLACEHOLDER in self._announcements[key]:
-            return self._remarks
+    def _choices(self, key: str) -> tuple[Saying, ...]:
+        """
+        Every way one of the three wordings can come out.
 
-        return (NOTHING,)
+        The server's template against each ending it can take, or against a
+        single blank where it takes none — a server that wrote an announcement
+        without a `{remark}` in it gets one phrase however many endings are
+        listed.
+
+        Generated announcements join the correct-answer wording and only that
+        one. The other two are a tie and a fine, and neither is a point being
+        awarded for recalling anything.
+
+        Added to the endings rather than pooled against the template, so the six
+        the tool ships with keep their six slots. Treating the template as one
+        entry against five generated sentences would leave the shipped endings
+        sharing a sixth of the draws between them, which is close enough to
+        never that a server enabling this would have quietly turned them off.
+        """
+        template = self._announcements[key]
+
+        written = (
+            tuple(Saying(template, remark) for remark in self._remarks)
+            if REMARK_PLACEHOLDER in template
+            else (Saying(template, NOTHING),)
+        )
+
+        if key != ANNOUNCEMENT_KEY:
+            return written
+
+        return written + tuple(Saying(text, NOTHING) for text in self._generated)
 
     def _answered(self, utterance: Utterance) -> Answer | None:
         """
@@ -1157,6 +1414,25 @@ def _credits(key: str, value: Any, default: int) -> int:
         ) from exc
 
 
+def _count(key: str, value: Any, default: int) -> int:
+    """
+    A whole number of things from the server's settings, or the default.
+
+    Floored at nothing, so a negative is the same as asking for none rather than
+    something for `random.sample` to raise about. Raised on for text that is not
+    a number at all, for the reason `_seconds` gives.
+    """
+    if value is None:
+        return default
+
+    try:
+        return max(NOTHING_AT_ALL, int(value))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"'{key}' must be a whole number, not {value!r}: {exc}"
+        ) from exc
+
+
 def _denominated(credits: int) -> str:
     """
     A number of credits as it will be said out loud, won or lost.
@@ -1241,6 +1517,18 @@ def _chosen(options: Sequence[T]) -> T:
     and which answer a trigger with several of them gives.
     """
     return random.choice(options)
+
+
+def _selection(options: Sequence[T], count: int) -> tuple[T, ...]:
+    """
+    Several of many, at random and without repeating.
+
+    Its own function for the reason `_chosen` is, and asked for more than one at
+    a time because a set drawn with repeats would render the same announcement
+    twice and leave the hour shorter than it looks. A count at or above what
+    there is takes everything.
+    """
+    return tuple(random.sample(list(options), min(count, len(options))))
 
 
 def _rolled() -> float:

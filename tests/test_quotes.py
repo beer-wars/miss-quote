@@ -26,14 +26,19 @@ from miss_quote.tools.quotes import (
     ANNOUNCEMENT_KEY,
     ANSWER_SECONDS_KEY,
     BACKOFF_SECONDS_KEY,
+    CATALOGUE_SIZE_KEY,
     CERTAIN,
     CHANCE_KEY,
     DEFAULT_ANNOUNCEMENT,
+    DEFAULT_CATALOGUE_SIZE,
     DEFAULT_QUIET_SECONDS,
     DEFAULT_REMARKS,
     DEFAULT_SELF_ANSWER_ANNOUNCEMENT,
     DEFAULT_SELF_ANSWER_PENALTY,
     DEFAULT_TIE_ANNOUNCEMENT,
+    GENERATED_COUNT_KEY,
+    GENERATED_INTERVAL_SECONDS_KEY,
+    GENERATED_KEY,
     IMPOSSIBLE,
     PENALIZE_SELF_ANSWERS_KEY,
     QUIET_SECONDS_KEY,
@@ -214,6 +219,13 @@ class RecordingSpeaker:
         self.played: list[tuple[Source, str]] = []
         self.scales: list[float] = []
         self.encoded: list[bool] = []
+
+        # Whether the bot is to be taken as being in a voice channel, which is
+        # what the tool asks before it renders anything in advance.
+        self.joined = True
+
+    def connected(self, source) -> bool:
+        return self.joined
 
     async def play(self, source, audio, scale: float = UNITY_VOLUME) -> None:
         packets = hasattr(audio, "packets") and scale == UNITY_VOLUME
@@ -2534,3 +2546,348 @@ def test_a_window_that_is_not_a_number_will_not_start(quotes_file, speech, speak
     """A server that wrote a window down meant something by it."""
     with pytest.raises(ValueError, match=ANSWER_SECONDS_KEY):
         _tool(speaker, config={ANSWER_SECONDS_KEY: "five"})
+
+
+# ── announcements the model writes ────────────────
+
+# What a catalogue comes back with, in place of anything reaching an endpoint.
+# Whole sentences carrying both placeholders, which is what the generator
+# promises whatever the model actually said.
+GENERATED = (
+    "Correct! {user}, that is {credits} for a memory better spent elsewhere.",
+    "{user} takes {credits}, and the rest of us take note.",
+    "That is {credits} to {user}, who knew it far too quickly.",
+)
+
+# Fewer than the catalogue holds, so a test can tell a draw from the whole list.
+DRAWN = 2
+
+NO_CATALOGUE: tuple[str, ...] = ()
+
+# The clock turned off, which draws one set for the run and returns rather than
+# leaving a test waiting out an hour.
+DRAW_ONCE = 0
+
+
+def _generating(catalogue=GENERATED, **extra) -> dict:
+    """A server's tool config with the model writing its announcements."""
+    return {
+        GENERATED_KEY: True,
+        GENERATED_COUNT_KEY: DRAWN,
+        GENERATED_INTERVAL_SECONDS_KEY: DRAW_ONCE,
+        **extra,
+    }
+
+
+def _wrote(monkeypatch, catalogue=GENERATED) -> list[int]:
+    """
+    Answer for the model, keeping how many were asked for each time.
+
+    Patched where the tool reaches it rather than at the HTTP client, so what a
+    test arranges is what came back rather than what an endpoint would have to
+    have said to produce it.
+    """
+    asked: list[int] = []
+
+    async def _catalogue(size, examples):
+        asked.append(size)
+        return tuple(catalogue)
+
+    monkeypatch.setattr("miss_quote.tools.quotes.announcements.catalogue", _catalogue)
+
+    return asked
+
+
+def _picked(monkeypatch) -> None:
+    """Settle which of the catalogue a draw takes, so it is a fixed list."""
+    monkeypatch.setattr(
+        "miss_quote.tools.quotes._selection",
+        lambda options, count: tuple(options[:count]),
+    )
+
+
+async def _drawn_set(tool: Quotes, joined: bool = True) -> None:
+    """
+    Let the tool write a catalogue and draw from it, renderer running behind.
+
+    The draw waits for everything it queued to be rendered, and rendering is the
+    speaking tool's own service — so a test that does not start it is one that
+    waits for a queue nothing is reading.
+    """
+    speaking = _speaking(tool)
+    running = asyncio.create_task(speaking.run())
+
+    try:
+        if joined:
+            await tool.handle_joined(SOURCE)
+
+        await tool.run()
+    finally:
+        running.cancel()
+
+
+def _generated_wording(text: str, user: str = SPEAKER) -> str:
+    """One generated announcement as it will be said, for one person."""
+    return text.format(user=user, credits=_denominated(ONE_CREDIT))
+
+
+async def test_a_generated_announcement_is_drawn_on_beside_the_shipped_ones(
+    quotes_file, speech, speaker, board, monkeypatch
+):
+    """The whole point: the model's sentences are said as well as the tool's."""
+    _wrote(monkeypatch)
+    _picked(monkeypatch)
+    tool = _tool(speaker, users=ROSTER, config=_generating(), board=board)
+
+    await _drawn_set(tool)
+
+    written = {saying.template for saying in tool._choices(ANNOUNCEMENT_KEY)}
+
+    assert GENERATED[:DRAWN] == tuple(text for text in GENERATED[:DRAWN] if text in written)
+    assert DEFAULT_ANNOUNCEMENT in written
+
+
+async def test_the_shipped_endings_keep_their_slots(
+    quotes_file, speech, speaker, board, monkeypatch
+):
+    """
+    Added rather than pooled against the template.
+
+    A generated set that displaced the endings would leave the six the tool
+    ships with sharing a single draw between them, which is close enough to
+    never that enabling this would have quietly turned them off.
+    """
+    _wrote(monkeypatch)
+    _picked(monkeypatch)
+    tool = _tool(speaker, users=ROSTER, config=_generating(), board=board)
+
+    await _drawn_set(tool)
+
+    endings = [
+        saying.remark
+        for saying in tool._choices(ANNOUNCEMENT_KEY)
+        if saying.template == DEFAULT_ANNOUNCEMENT
+    ]
+
+    assert endings == list(DEFAULT_REMARKS)
+
+
+async def test_a_generated_announcement_is_said_when_it_is_drawn(
+    quotes_file, speech, speaker, board, monkeypatch
+):
+    _wrote(monkeypatch)
+    _picked(monkeypatch)
+    tool = _tool(speaker, users=ROSTER, config=_generating(), board=board, quiet=NO_WINDOW)
+
+    await _drawn_set(tool)
+
+    # The last of the choices is a generated one, the shipped endings coming
+    # first; `settled` takes the first, so this test does its own arranging.
+    _drawn(monkeypatch, last=True)
+
+    await _quoted(tool)
+    await _hear(tool, ANSWER)
+
+    assert speech.asked[-1] == _generated_wording(GENERATED[DRAWN - 1])
+
+
+async def test_a_generated_set_is_rendered_before_it_goes_live(
+    quotes_file, speech, speaker, board, monkeypatch
+):
+    """
+    Nothing is ever said that was not already synthesized.
+
+    A generated announcement that goes live unrendered is four seconds of
+    silence the first time it comes up, which is the whole thing the pre-warm
+    exists to prevent.
+    """
+    _wrote(monkeypatch)
+    _picked(monkeypatch)
+    tool = _tool(speaker, users=ROSTER, config=_generating(), board=board)
+
+    await _drawn_set(tool)
+
+    wanted = {
+        _generated_wording(text, name)
+        for text in GENERATED[:DRAWN]
+        for name in ROSTER.values()
+    }
+
+    assert wanted <= set(speech.warmed)
+
+
+async def test_every_speaker_on_the_roster_is_rendered(
+    quotes_file, speech, speaker, board, monkeypatch
+):
+    """A generated announcement names the winner, so it is one phrase per name."""
+    _wrote(monkeypatch)
+    _picked(monkeypatch)
+    tool = _tool(speaker, users=ROSTER, config=_generating(), board=board)
+
+    await _drawn_set(tool)
+
+    for name in ROSTER.values():
+        assert _generated_wording(GENERATED[0], name) in speech.warmed
+
+
+async def test_nothing_is_asked_of_the_model_when_the_flag_is_off(
+    quotes_file, speech, speaker, board, monkeypatch
+):
+    """Enabling a quote game should not quietly start spending somebody's tokens."""
+    asked = _wrote(monkeypatch)
+    tool = _tool(speaker, users=ROSTER, config={}, board=board)
+
+    await _drawn_set(tool)
+
+    assert asked == []
+    assert tool._generated == NO_CATALOGUE
+
+
+async def test_nothing_is_drawn_while_the_bot_is_out_of_every_channel(
+    quotes_file, speech, speaker, board, monkeypatch
+):
+    """
+    A draw is an hour of synthesis for a room that may be empty.
+
+    The catalogue is still written — that happens once, on the way up, whatever
+    the bot is doing — but nothing is drawn from it or rendered.
+    """
+    asked = _wrote(monkeypatch)
+    _picked(monkeypatch)
+    speaker.joined = False
+    tool = _tool(speaker, users=ROSTER, config=_generating(), board=board)
+
+    await _drawn_set(tool)
+
+    assert asked
+    assert tool._generated == NO_CATALOGUE
+    assert speech.warmed == []
+
+
+async def test_joining_a_channel_draws_a_first_set(
+    quotes_file, speech, speaker, board, monkeypatch
+):
+    """
+    Otherwise the room somebody joins at eight waits until nine to hear one.
+
+    The bot comes up before anybody is in a channel, so a process that reached
+    its clock with nowhere to play has a catalogue and nothing drawn from it.
+    """
+    _wrote(monkeypatch)
+    _picked(monkeypatch)
+    speaker.joined = False
+    tool = _tool(speaker, users=ROSTER, config=_generating(), board=board)
+
+    await _drawn_set(tool, joined=False)
+    assert tool._generated == NO_CATALOGUE
+
+    speaker.joined = True
+    speaking = _speaking(tool)
+    running = asyncio.create_task(speaking.run())
+
+    try:
+        await tool.handle_joined(SOURCE)
+    finally:
+        running.cancel()
+
+    assert tool._generated == GENERATED[:DRAWN]
+
+
+async def test_a_join_with_a_set_already_live_draws_nothing_new(
+    quotes_file, speech, speaker, board, monkeypatch
+):
+    """The bot moving between rooms is not a reason to redraw."""
+    _wrote(monkeypatch)
+    _picked(monkeypatch)
+    tool = _tool(speaker, users=ROSTER, config=_generating(), board=board)
+
+    await _drawn_set(tool)
+    rendered = list(speech.warmed)
+
+    await tool.handle_joined(SOURCE)
+
+    assert speech.warmed == rendered
+
+
+async def test_the_tool_says_its_own_wordings_when_the_model_says_nothing(
+    quotes_file, speech, speaker, board, monkeypatch
+):
+    """A catalogue that came back empty is a quieter tool, not a broken one."""
+    _wrote(monkeypatch, catalogue=NO_CATALOGUE)
+    tool = _tool(speaker, users=ROSTER, config=_generating(), board=board, quiet=NO_WINDOW)
+
+    await _drawn_set(tool)
+
+    assert tool._generated == NO_CATALOGUE
+
+    await _quoted(tool)
+    await _hear(tool, ANSWER)
+
+    assert speech.asked[-1] == _announced()
+
+
+async def test_a_model_that_will_not_answer_costs_the_announcements_and_nothing_else(
+    quotes_file, speech, speaker, board, monkeypatch
+):
+    """The tool still runs its rounds; it just has less to say about them."""
+
+    async def _raising(size, examples):
+        raise RuntimeError("the endpoint is on fire")
+
+    monkeypatch.setattr("miss_quote.tools.quotes.announcements.catalogue", _raising)
+    tool = _tool(speaker, users=ROSTER, config=_generating(), board=board, quiet=NO_WINDOW)
+
+    await _drawn_set(tool)
+
+    await _quoted(tool)
+    await _hear(tool, ANSWER)
+
+    assert speech.asked[-1] == _announced()
+
+
+async def test_the_tie_wording_is_never_generated(
+    quotes_file, speech, speaker, board, monkeypatch
+):
+    """A tie is not a point being awarded for recalling anything."""
+    _wrote(monkeypatch)
+    _picked(monkeypatch)
+    tool = _tool(speaker, users=ROSTER, config=_generating(), board=board)
+
+    await _drawn_set(tool)
+
+    assert [saying.template for saying in tool._choices(TIE_ANNOUNCEMENT_KEY)] == [
+        DEFAULT_TIE_ANNOUNCEMENT
+    ]
+
+
+async def test_the_catalogue_is_asked_for_once(
+    quotes_file, speech, speaker, board, monkeypatch
+):
+    """
+    The model is spent in one burst on the way up and left alone thereafter.
+
+    A second draw from the same catalogue is a random number and some synthesis,
+    which is the whole reason the two are separate stages.
+    """
+    asked = _wrote(monkeypatch)
+    _picked(monkeypatch)
+    tool = _tool(speaker, users=ROSTER, config=_generating(), board=board)
+
+    await _drawn_set(tool)
+
+    speaking = _speaking(tool)
+    running = asyncio.create_task(speaking.run())
+
+    try:
+        await tool._rotate()
+    finally:
+        running.cancel()
+
+    assert asked == [DEFAULT_CATALOGUE_SIZE]
+
+
+def test_a_catalogue_size_that_is_not_a_number_will_not_start(
+    quotes_file, speech, speaker
+):
+    with pytest.raises(ValueError, match=CATALOGUE_SIZE_KEY):
+        _tool(speaker, config={CATALOGUE_SIZE_KEY: "fifty"})

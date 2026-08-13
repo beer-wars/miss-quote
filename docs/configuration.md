@@ -148,6 +148,10 @@ quotes:
 | `penalize_self_answers` | no, `true` | Whether whoever set a line off is barred from naming it. `false` lets them answer like anybody else |
 | `self_answer_penalty` | no, `5` | What an attempt costs them, in credits. Floored at `0` |
 | `remarks` | no | Endings the announcement draws from, **added** to the ones the tool ships with. A lone one may be written unquoted rather than as a list |
+| `generated_point_responses` | no, `false` | Whether to have the model write whole announcements of its own, drawn on beside the shipped endings; see [announcements the model writes](#announcements-the-model-writes) |
+| `generated_catalogue_size` | no, `50` | How many the model is asked for at startup and held for the life of the process |
+| `generated_response_count` | no, `5` | How many of that catalogue are live at a time |
+| `generated_interval_seconds` | no, `3600` | How often a fresh set is drawn from the catalogue. `0`, or below, draws one set for the run |
 | `announcement` | no | What the winner is told. `{user}`, `{credits}`, and `{remark}` |
 | `tie_announcement` | no | What anyone paid on a tie is told. The same placeholders |
 | `self_answer_announcement` | no | What somebody naming their own line is told. The same placeholders, where `{credits}` is what it cost |
@@ -381,6 +385,42 @@ Correct! Erik, you are awarded 1 credit for quoting along at home.
 - `spending your formative years exactly as you did.`
 
 `remarks` **adds** to those rather than replacing them. None of the shipped endings says "film", and the `movie` key is named more narrowly than it behaves — a trigger answers for a series, a game, or a book as often as a picture, and an announcement that guesses wrong guesses wrong out loud. Write your own the same way.
+
+#### Announcements the model writes {#announcements-the-model-writes}
+
+Six endings are enough to be a joke and not enough to be a joke twice. With `generated_point_responses: true` the bot also asks the model for **whole announcements** of its own — complete sentences carrying `{user}` and `{credits}`, drawn on **beside** the shipped endings rather than instead of them.
+
+```yaml
+quotes:
+  enabled: true
+  config:
+    generated_point_responses: true
+    generated_catalogue_size: 50
+    generated_response_count: 5
+    generated_interval_seconds: 3600
+```
+
+This needs an endpoint: `LLM_API_BASE` and `LLM_MODEL`, the same two [`settings.llm`](#settings-llm) points `summary` at. With nothing answering there, rounds are announced with the wordings the tool ships with and the log says so once.
+
+It works in two stages, and the split is the point:
+
+- **The catalogue** is written once, at startup, in batches, and held in memory for the life of the process. The model is never asked again.
+- **The live set** is `generated_response_count` drawn from that catalogue at random, rendered, and made current for `generated_interval_seconds` before a fresh set is drawn.
+
+A draw only ever happens while the bot is **in a voice channel**, and the phrases it picked are synthesized *before* they go live — so nothing is ever said that was not already rendered, and a server nobody is sitting in costs a sleeping task and nothing else. Joining a channel draws a first set immediately rather than waiting out the interval.
+
+Anything the model writes that will not interpolate is dropped rather than said: a sentence naming no winner, one asking for a `{remark}`, or one with a stray brace in it. A short catalogue is a short catalogue; the shipped endings are still there.
+
+<details class="why" markdown="1">
+<summary>What this costs in synthesis, and why the catalogue is fixed</summary>
+
+Every announcement names the winner, so a draw renders `generated_response_count` phrases for each person on the server's `users` roster — five announcements against twenty names is a hundred clips.
+
+Because the catalogue does not change while the process runs, that number has a ceiling: `generated_catalogue_size × roster`, reached once and then served from cache forever. Most draws after the first day render nothing at all. Regenerating every hour instead would have made that an unbounded cost rather than a one-off.
+
+What does accumulate is restarts, since each one writes a fresh catalogue. Rendered speech is kept for [`settings.tts.cache_retention_days`](#settings-tts), 90 by default, so a bot restarted daily leaves a few thousand clips behind before the reaper starts clearing the oldest. Shorten that retention, or lengthen the interval, where the speech volume is tight.
+
+</details>
 
 Somebody paid on a **tie** gets the second wording — `Eli, you are also awarded 1 credit, for getting there at the same time.` — because the whole sentence again reads as though the bot had lost track of what it just said.
 
