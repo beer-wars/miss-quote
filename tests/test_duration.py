@@ -56,8 +56,11 @@ def test_a_bare_number_is_seconds() -> None:
     assert duration.parse(1.5) == 1.5
 
 
-@pytest.mark.parametrize("written", ["forever", "never", "FOREVER"])
+@pytest.mark.parametrize(
+    "written", ["forever", "never", "immediately", "FOREVER", "Immediately"]
+)
 def test_the_keywords_are_a_span_of_nothing(written: str) -> None:
+    """All of them are the same zero; which one reads correctly is the setting's."""
     assert duration.parse(written) == duration.NEVER
 
 
@@ -79,6 +82,15 @@ def test_a_negative_span_is_read_as_one() -> None:
 def test_anything_unreadable_is_refused(written: str) -> None:
     with pytest.raises(ValueError):
         duration.parse(written)
+
+
+def test_a_complaint_offers_every_keyword() -> None:
+    """Somebody who reached for a word that is not one needs the ones that are."""
+    with pytest.raises(ValueError) as raised:
+        duration.parse("a moment")
+
+    for keyword in duration.KEYWORDS:
+        assert keyword in str(raised.value), keyword
 
 
 @pytest.mark.parametrize("written", [True, False])

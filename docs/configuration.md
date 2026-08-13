@@ -910,7 +910,7 @@ Every setting naming a span — a timeout, a backoff, a retention, a fade — ca
 | `1h30m` | ninety minutes — units compound and are summed |
 | `30` | thirty seconds — a bare number is seconds |
 
-**A span can be turned off three ways**, which mean the same thing and read differently depending on the setting: `forever`, `never`, `0`, or a negative span like `-1d`. A retention of `forever` keeps everything; a backoff of `0` answers every time.
+**A span can be turned off three ways**, which mean the same thing and read differently depending on the setting: a word — `forever`, `never`, or `immediately` — `0`, or a negative span like `-1d`. A retention of `forever` keeps everything; a backoff of `never` answers every time; a wait of `immediately` does not wait.
 
 **`off` and `no` are not among them.** YAML reads both as booleans before the value is ever parsed, so a file that turns a window off that way is reported rather than obeyed.
 
