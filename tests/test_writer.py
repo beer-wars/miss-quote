@@ -8,9 +8,10 @@ import miss_quote.transcript.writer as writer_module
 from miss_quote.transcript.schedule import ALWAYS, Schedule
 from miss_quote.transcript.writer import Source, TranscriptWriter
 from miss_quote.utils.slugs import slugify
+from miss_quote.utils import duration
 
 TIMEZONE = "America/Los_Angeles"
-KEEP_FOREVER = -1
+KEEP_FOREVER = -duration.DAY
 USER_ID = 1234567890
 USER = "someone"
 
@@ -45,13 +46,13 @@ def frozen_clock(monkeypatch):
 
 
 def _writer(
-    tmp_path, retention_days: int = KEEP_FOREVER, schedule: Schedule = ALWAYS
+    tmp_path, retention: int = KEEP_FOREVER, schedule: Schedule = ALWAYS
 ) -> TranscriptWriter:
     """A writer whose every room is on the same schedule, whichever room it is."""
     return TranscriptWriter(
         directory=tmp_path,
         timezone=TIMEZONE,
-        retention_days=retention_days,
+        retention=retention,
         schedules=lambda guild_id, channel: schedule,
     )
 
@@ -482,7 +483,7 @@ def test_a_repeated_session_is_still_pruned(tmp_path, frozen_clock):
     """The ordinal on the end of a name must not exempt it from retention."""
     zone = ZoneInfo(TIMEZONE)
     frozen_clock(datetime(2026, 7, 26, 10, 0, 0, tzinfo=zone))
-    writer = _writer(tmp_path, retention_days=7)
+    writer = _writer(tmp_path, retention=7)
 
     repeated = writer.open(SOURCE)
     writer.open(SOURCE)

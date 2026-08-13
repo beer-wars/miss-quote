@@ -109,6 +109,7 @@ from miss_quote.tools.base import Tool, ToolContext
 from miss_quote.tools.scoreboard import Scoreboard
 from miss_quote.tools.tts import Tts
 from miss_quote.transcript.writer import Source, TranscriptSession, Utterance
+from miss_quote.utils import duration
 from miss_quote.utils.logging import get_logger
 from miss_quote.utils.phrases import NOTHING, WORD_BOUNDARY, normalized, pattern
 from miss_quote.utils.stems import plural
@@ -160,8 +161,8 @@ TRIGGER_SEPARATOR = ", "
 # What a server may say about the round, and what it gets for saying nothing.
 # The defaults live here rather than in the config file so that electing into
 # the tool is the whole decision a server has to make.
-ANSWER_SECONDS_KEY = "answer_seconds"
-TIE_SECONDS_KEY = "tie_seconds"
+ANSWER_KEY = "answer"
+TIE_KEY = "tie"
 DEFAULT_ANSWER_SECONDS = 10.0
 DEFAULT_TIE_SECONDS = 1.0
 
@@ -169,7 +170,7 @@ DEFAULT_TIE_SECONDS = 1.0
 # `settings.quotes`, which is the deployment's answer and what a server that
 # says nothing gets: one room says the same six things all night and the next
 # one does not, and neither has to be the whole deployment's business.
-BACKOFF_SECONDS_KEY = "backoff_seconds"
+BACKOFF_KEY = "backoff"
 
 # How long whoever set a line off has to go quiet before it is said.
 #
@@ -184,7 +185,7 @@ BACKOFF_SECONDS_KEY = "backoff_seconds"
 # conversation. It is paid by every quote, so it is deliberately shorter than
 # anything else waited on here: the joke is the recognition, and a line that
 # arrives after the channel has moved on is not one.
-QUIET_SECONDS_KEY = "quiet_seconds"
+QUIET_KEY = "quiet"
 DEFAULT_QUIET_SECONDS = 1.0
 
 # How often a trigger the tool heard is actually answered, as a probability.
@@ -318,7 +319,7 @@ DEFAULT_REMARKS = (
 GENERATED_KEY = "generated_point_responses"
 CATALOGUE_SIZE_KEY = "generated_catalogue_size"
 GENERATED_COUNT_KEY = "generated_response_count"
-GENERATED_INTERVAL_SECONDS_KEY = "generated_interval_seconds"
+GENERATED_INTERVAL_KEY = "generated_interval"
 
 GENERATION_OFF = False
 
@@ -625,20 +626,20 @@ class Quotes(Tool):
         )
         self._triggers = pattern(self._quotes)
         self._recent = RecentQuotes(
-            _seconds(
-                BACKOFF_SECONDS_KEY,
-                config.get(BACKOFF_SECONDS_KEY),
+            _span(
+                BACKOFF_KEY,
+                config.get(BACKOFF_KEY),
                 quotes_cfg.backoff_seconds,
             )
         )
-        self._window = _seconds(
-            ANSWER_SECONDS_KEY, config.get(ANSWER_SECONDS_KEY), DEFAULT_ANSWER_SECONDS
+        self._window = _span(
+            ANSWER_KEY, config.get(ANSWER_KEY), DEFAULT_ANSWER_SECONDS
         )
-        self._tie = _seconds(
-            TIE_SECONDS_KEY, config.get(TIE_SECONDS_KEY), DEFAULT_TIE_SECONDS
+        self._tie = _span(
+            TIE_KEY, config.get(TIE_KEY), DEFAULT_TIE_SECONDS
         )
-        self._quiet = _seconds(
-            QUIET_SECONDS_KEY, config.get(QUIET_SECONDS_KEY), DEFAULT_QUIET_SECONDS
+        self._quiet = _span(
+            QUIET_KEY, config.get(QUIET_KEY), DEFAULT_QUIET_SECONDS
         )
         self._chance = _chance(CHANCE_KEY, config.get(CHANCE_KEY), CERTAIN)
         self._announcements = {
@@ -653,9 +654,9 @@ class Quotes(Tool):
         self._generated_count = _count(
             GENERATED_COUNT_KEY, config.get(GENERATED_COUNT_KEY), DEFAULT_GENERATED_COUNT
         )
-        self._generated_interval = _seconds(
-            GENERATED_INTERVAL_SECONDS_KEY,
-            config.get(GENERATED_INTERVAL_SECONDS_KEY),
+        self._generated_interval = _span(
+            GENERATED_INTERVAL_KEY,
+            config.get(GENERATED_INTERVAL_KEY),
             DEFAULT_GENERATED_INTERVAL_SECONDS,
         )
 
@@ -738,7 +739,7 @@ class Quotes(Tool):
                 "Enable the 'scoreboard' tool to pay for it, or set '%s' to 0 to stop "
                 "asking.",
                 self.server,
-                ANSWER_SECONDS_KEY,
+                ANSWER_KEY,
             )
 
         if speech is None:
@@ -1355,9 +1356,9 @@ class Quotes(Tool):
         return _rolled() < self._chance
 
 
-def _seconds(key: str, value: Any, default: float) -> float:
+def _span(key: str, value: Any, default: float) -> float:
     """
-    A window from the server's settings, or the default it did not set.
+    A window from the server's settings, as seconds, or its default.
 
     Raised on rather than defaulted past: a server that wrote a window down
     meant something by it, and quietly ignoring a typo would leave a channel
@@ -1367,11 +1368,9 @@ def _seconds(key: str, value: Any, default: float) -> float:
         return default
 
     try:
-        return float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"'{key}' must be a number of seconds, not {value!r}: {exc}"
-        ) from exc
+        return duration.parse(value)
+    except ValueError as exc:
+        raise ValueError(f"'{key}' is not a span of time: {exc}") from exc
 
 
 def _chance(key: str, value: Any, default: float) -> float:
@@ -1382,7 +1381,7 @@ def _chance(key: str, value: Any, default: float) -> float:
     meaningful and everything outside them is the same two answers written less
     clearly: a probability above one is certainty and one below nothing is
     never. What is raised on is text that is not a number at all, for the reason
-    `_seconds` gives — a server that wrote odds down meant something by them.
+    `_span` gives — a server that wrote odds down meant something by them.
     """
     if value is None:
         return default
@@ -1420,7 +1419,7 @@ def _count(key: str, value: Any, default: int) -> int:
 
     Floored at nothing, so a negative is the same as asking for none rather than
     something for `random.sample` to raise about. Raised on for text that is not
-    a number at all, for the reason `_seconds` gives.
+    a number at all, for the reason `_span` gives.
     """
     if value is None:
         return default

@@ -9,9 +9,10 @@ from miss_quote.stt.processor import STTProcessor
 from miss_quote.tools.runner import ToolRunner
 from miss_quote.transcript.schedule import ALWAYS
 from miss_quote.transcript.writer import Source, TranscriptSession, TranscriptWriter
+from miss_quote.utils import duration
 
 TIMEZONE = "America/Los_Angeles"
-KEEP_FOREVER = -1
+KEEP_FOREVER = -duration.DAY
 SOURCE = Source(
     guild_id=987654321, guild_alias="first-server", channel_id=456, channel="general-voice"
 )
@@ -78,7 +79,7 @@ async def build(monkeypatch, tmp_path, transcripts):
         writer = TranscriptWriter(
             directory=tmp_path,
             timezone=TIMEZONE,
-            retention_days=KEEP_FOREVER,
+            retention=KEEP_FOREVER,
             schedules=lambda guild_id, channel: ALWAYS,
         )
         session = writer.open(SOURCE)

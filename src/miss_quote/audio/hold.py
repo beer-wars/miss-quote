@@ -98,18 +98,22 @@ class HoldMusic:
         self._clip = clip[: len(clip) - len(clip) % frame_bytes]
 
         self._volume = volume
+
+        # Everything below counts in milliseconds, because that is what a frame
+        # of playback is measured in and what `_fed_ms` accumulates. The
+        # settings are spans of time, so they convert once, here.
         self._fade_in_ms = (
-            tts_cfg.hold_fade_in_ms if fade_in_ms is None else fade_in_ms
+            _milliseconds(tts_cfg.hold_fade_in) if fade_in_ms is None else fade_in_ms
         )
         self._fade_out_ms = (
-            tts_cfg.hold_fade_out_ms if fade_out_ms is None else fade_out_ms
+            _milliseconds(tts_cfg.hold_fade_out) if fade_out_ms is None else fade_out_ms
         )
 
         # How far ahead of the player to stay. The same span the synthesizer is
         # given before a clip starts, and for the same reason: it is how much
         # audio this deployment considers a comfortable cushion.
         self._head_start_ms = (
-            tts_cfg.lead_ms if head_start_ms is None else head_start_ms
+            _milliseconds(tts_cfg.lead) if head_start_ms is None else head_start_ms
         )
 
         self._position = 0
@@ -221,3 +225,8 @@ class HoldMusic:
 
         if ahead > IMMEDIATELY:
             await asyncio.sleep(ahead / MILLISECONDS_PER_SECOND)
+
+
+def _milliseconds(seconds: float) -> float:
+    """A configured span, in what the fade and the cushion count in."""
+    return seconds * MILLISECONDS_PER_SECOND

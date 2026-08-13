@@ -5,11 +5,12 @@ import pytest
 
 from miss_quote.config import transcript_cfg
 from miss_quote.transcript.writer import Source, TranscriptWriter
+from miss_quote.utils import duration
 
 TIMEZONE = "America/Los_Angeles"
-KEEP_FOREVER = -1
-DISABLED_BY_ZERO = 0
-KEEP_A_WEEK = 7
+KEEP_FOREVER = -duration.DAY
+DISABLED_BY_ZERO = duration.NEVER
+KEEP_A_WEEK = 7 * duration.DAY
 
 # Any time of day will do; retention is decided by the date part alone.
 SEEDED_TIME = (14, 30, 0)
@@ -51,13 +52,13 @@ def _names(directory) -> set[str]:
     return {path.name for path in directory.rglob("*.jsonl")}
 
 
-@pytest.mark.parametrize("retention_days", [KEEP_FOREVER, DISABLED_BY_ZERO])
-def test_pruning_disabled_keeps_everything(tmp_path, retention_days: int) -> None:
+@pytest.mark.parametrize("retention", [KEEP_FOREVER, DISABLED_BY_ZERO])
+def test_pruning_disabled_keeps_everything(tmp_path, retention: float) -> None:
     _seed(tmp_path, days_ago=365)
     _seed(tmp_path, days_ago=1)
 
     writer = TranscriptWriter(
-        directory=tmp_path, timezone=TIMEZONE, retention_days=retention_days
+        directory=tmp_path, timezone=TIMEZONE, retention=retention
     )
     removed = writer.prune()
 
@@ -72,7 +73,7 @@ def test_positive_retention_removes_only_old_files(tmp_path) -> None:
     _seed(tmp_path, days_ago=0)
 
     TranscriptWriter(
-        directory=tmp_path, timezone=TIMEZONE, retention_days=KEEP_A_WEEK
+        directory=tmp_path, timezone=TIMEZONE, retention=KEEP_A_WEEK
     )
 
     survivors = _names(tmp_path)
@@ -91,7 +92,7 @@ def test_age_comes_from_filename_not_mtime(tmp_path) -> None:
     old.touch()  # mtime is now; the filename says otherwise
 
     TranscriptWriter(
-        directory=tmp_path, timezone=TIMEZONE, retention_days=KEEP_A_WEEK
+        directory=tmp_path, timezone=TIMEZONE, retention=KEEP_A_WEEK
     )
 
     assert not old.exists()
@@ -103,7 +104,7 @@ def test_unrecognised_filenames_are_left_alone(tmp_path) -> None:
     stray.write_text("{}\n")
 
     TranscriptWriter(
-        directory=tmp_path, timezone=TIMEZONE, retention_days=KEEP_A_WEEK
+        directory=tmp_path, timezone=TIMEZONE, retention=KEEP_A_WEEK
     )
 
     assert stray.exists()
@@ -116,7 +117,7 @@ def test_pruning_reaches_every_channel(tmp_path) -> None:
     _seed(tmp_path, days_ago=1, source=OTHER_CHANNEL)
 
     TranscriptWriter(
-        directory=tmp_path, timezone=TIMEZONE, retention_days=KEEP_A_WEEK
+        directory=tmp_path, timezone=TIMEZONE, retention=KEEP_A_WEEK
     )
 
     assert _names(tmp_path) == {_name(1)}
@@ -125,7 +126,7 @@ def test_pruning_reaches_every_channel(tmp_path) -> None:
 def test_opening_a_session_prunes(tmp_path) -> None:
     """Sessions are the only recurring event the writer sees now."""
     writer = TranscriptWriter(
-        directory=tmp_path, timezone=TIMEZONE, retention_days=KEEP_A_WEEK
+        directory=tmp_path, timezone=TIMEZONE, retention=KEEP_A_WEEK
     )
     _seed(tmp_path, days_ago=30)
 

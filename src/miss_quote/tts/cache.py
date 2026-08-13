@@ -53,6 +53,7 @@ from miss_quote.audio import opus
 from miss_quote.audio.resampler import PlaybackResampler
 from miss_quote.config import speech_cfg, tts_cfg
 from miss_quote.tts.client import SynthesisError, synthesize
+from miss_quote.utils import duration
 from miss_quote.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -77,7 +78,8 @@ BYTES_PER_KIB = 1024
 
 # Below this the reaper does nothing, so a mis-set variable cannot empty the
 # cache and 0 is a no-op rather than "delete everything".
-MINIMUM_RETENTION_DAYS = 1
+# Anything at or below nothing keeps every rendered clip.
+MINIMUM_RETENTION = duration.NEVER
 
 # Holds warming to one phrase at a time across every server in the process. See
 # `SpeechCache.warm`; nothing on the path to playback ever takes it.
@@ -125,10 +127,10 @@ class SpeechCache:
     def __init__(
         self,
         directory: Path | None = None,
-        retention_days: int | None = None,
+        retention: float | None = None,
     ) -> None:
-        self._retention_days = (
-            tts_cfg.cache_retention_days if retention_days is None else retention_days
+        self._retention = (
+            tts_cfg.cache_retention if retention is None else retention
         )
         self._directory = self._prepare(
             Path(speech_cfg.cache_directory if directory is None else directory)
@@ -382,10 +384,10 @@ class SpeechCache:
         matters here is when a clip was last wanted rather than when it was
         first rendered, and `_touch` keeps that current.
         """
-        if self._directory is None or self._retention_days < MINIMUM_RETENTION_DAYS:
+        if self._directory is None or self._retention <= MINIMUM_RETENTION:
             return []
 
-        cutoff = datetime.now() - timedelta(days=self._retention_days)
+        cutoff = datetime.now() - timedelta(seconds=self._retention)
         reaped: list[Path] = []
 
         for path in self._directory.iterdir():
@@ -404,9 +406,9 @@ class SpeechCache:
 
         if reaped:
             logger.info(
-                "Reaped %d cached clips nothing has played in %d days.",
+                "Reaped %d cached clips nothing has played in %s.",
                 len(reaped),
-                self._retention_days,
+                duration.spoken(self._retention),
             )
 
         return reaped

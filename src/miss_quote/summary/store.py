@@ -68,6 +68,7 @@ from miss_quote.transcript.writer import (
     opened_from_filename,
     utterances_in,
 )
+from miss_quote.utils import duration
 from miss_quote.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -233,18 +234,18 @@ class SummaryStore:
     def __init__(
         self,
         directory: Path | None = None,
-        retention_days: int | None = None,
+        retention: float | None = None,
         transcripts: Path | None = None,
     ) -> None:
         self._directory = Path(directory or summary_cfg.directory)
-        self._retention_days = (
-            summary_cfg.retention_days if retention_days is None else retention_days
+        self._retention = (
+            summary_cfg.retention if retention is None else retention
         )
         self._transcripts = Path(transcripts or transcript_cfg.directory)
 
     @property
     def retention_enabled(self) -> bool:
-        return self._retention_days >= 1
+        return self._retention > duration.NEVER
 
     def path_for(self, transcript: Transcript, name: str | None = None) -> Path:
         """
@@ -380,8 +381,10 @@ class SummaryStore:
         # The same clock the session was named by, so a summary is not kept or
         # dropped a day early for having been taken in a different timezone from
         # the one the process is reading it in.
-        today = datetime.now(ZoneInfo(transcript_cfg.timezone)).date()
-        cutoff = today - timedelta(days=self._retention_days)
+        # Taken back as a moment and then down to a day, because what a name
+        # carries is a date: a window shorter than a day leaves only today's.
+        now = datetime.now(ZoneInfo(transcript_cfg.timezone))
+        cutoff = (now - timedelta(seconds=self._retention)).date()
         removed: list[Path] = []
 
         for path in self._directory.rglob(f"*{summary_cfg.filename_suffix}"):
@@ -397,9 +400,9 @@ class SummaryStore:
 
             removed.append(path)
             logger.info(
-                "Pruned summary %s (older than %d days).",
+                "Pruned summary %s (older than %s).",
                 path.relative_to(self._directory),
-                self._retention_days,
+                duration.spoken(self._retention),
             )
 
         return removed

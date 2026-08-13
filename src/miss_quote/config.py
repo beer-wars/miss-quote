@@ -16,6 +16,7 @@ import yaml
 from dotenv import load_dotenv
 
 from miss_quote.transcript.schedule import ALWAYS, NEVER, Schedule
+from miss_quote.utils import duration
 from miss_quote.utils.slugs import slugify
 
 load_dotenv()
@@ -67,6 +68,16 @@ def _env_float(name: str, default: float) -> float:
         return float(value)
     except ValueError as exc:
         raise ValueError(f"{name} must be a number, got {value!r}") from exc
+
+
+def _env_duration(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    try:
+        return duration.parse(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a span of time, got {value!r}") from exc
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -123,29 +134,41 @@ LLM_SECTION = "llm"
 SUMMARIES_SECTION = "summaries"
 PRESENCE_SECTION = "presence"
 
-TIMEOUT_SECONDS_KEY = "timeout_seconds"
-STALL_SECONDS_KEY = "stall_seconds"
-LEAD_MS_KEY = "lead_ms"
-HOLD_FADE_IN_MS_KEY = "hold_fade_in_ms"
-HOLD_FADE_OUT_MS_KEY = "hold_fade_out_ms"
-CACHE_RETENTION_DAYS_KEY = "cache_retention_days"
+TIMEOUT_KEY = "timeout"
+STALL_KEY = "stall"
+LEAD_KEY = "lead"
+HOLD_FADE_IN_KEY = "hold_fade_in"
+HOLD_FADE_OUT_KEY = "hold_fade_out"
+CACHE_RETENTION_KEY = "cache_retention"
 CURRENCY_KEY = "currency"
-SAVE_SECONDS_KEY = "save_seconds"
-TOPIC_SECONDS_KEY = "topic_seconds"
-REPEAT_SECONDS_KEY = "repeat_seconds"
-RECALL_SECONDS_KEY = "recall_seconds"
-BACKOFF_SECONDS_KEY = "backoff_seconds"
+SAVE_KEY = "save"
+TOPIC_KEY = "topic"
+REPEAT_KEY = "repeat"
+RECALL_KEY = "recall"
+BACKOFF_KEY = "backoff"
 BACKOFF_PERCENT_KEY = "backoff_percent"
 VOLUME_FLOOR_KEY = "volume_floor"
 DAMPEN_AFTER_KEY = "dampen_after"
-DAMPEN_SECONDS_KEY = "dampen_seconds"
-RETENTION_DAYS_KEY = "retention_days"
-RESUME_SECONDS_KEY = "resume_seconds"
+DAMPEN_KEY = "dampen"
+RETENTION_KEY = "retention"
+RESUME_KEY = "resume"
 SCHEDULE_KEY = "schedule"
 MAX_OUTPUT_TOKENS_KEY = "max_output_tokens"
 TEMPERATURE_KEY = "temperature"
 THINKING_KEY = "thinking"
 TRANSCRIBING_KEY = "transcribing"
+
+class Duration(float):
+    """
+    A span of time, as the schema names one.
+
+    A type rather than a flag because that is the shape the schema already
+    speaks in: every other setting is declared by what its value has to be, and
+    a window is no different. Subclassing `float` is what makes it honest —
+    `duration.parse` returns seconds, and a field holding one is a number
+    everywhere it is read.
+    """
+
 
 # Every setting there is, and what each one has to be. A name absent from here
 # is read by nothing, which is the quiet failure worth catching: the alternative
@@ -153,43 +176,43 @@ TRANSCRIBING_KEY = "transcribing"
 # plainly asks for something else.
 SETTINGS_SCHEMA: Mapping[str, Mapping[str, type]] = {
     TTS_SECTION: {
-        TIMEOUT_SECONDS_KEY: float,
-        STALL_SECONDS_KEY: float,
-        LEAD_MS_KEY: float,
-        HOLD_FADE_IN_MS_KEY: float,
-        HOLD_FADE_OUT_MS_KEY: float,
-        CACHE_RETENTION_DAYS_KEY: int,
+        TIMEOUT_KEY: Duration,
+        STALL_KEY: Duration,
+        LEAD_KEY: Duration,
+        HOLD_FADE_IN_KEY: Duration,
+        HOLD_FADE_OUT_KEY: Duration,
+        CACHE_RETENTION_KEY: Duration,
     },
     CREDITS_SECTION: {
         CURRENCY_KEY: str,
-        SAVE_SECONDS_KEY: float,
-        TOPIC_SECONDS_KEY: float,
+        SAVE_KEY: Duration,
+        TOPIC_KEY: Duration,
     },
     FINES_SECTION: {
-        REPEAT_SECONDS_KEY: float,
-        RECALL_SECONDS_KEY: float,
-        BACKOFF_SECONDS_KEY: float,
+        REPEAT_KEY: Duration,
+        RECALL_KEY: Duration,
+        BACKOFF_KEY: Duration,
         BACKOFF_PERCENT_KEY: float,
         VOLUME_FLOOR_KEY: float,
         DAMPEN_AFTER_KEY: int,
-        DAMPEN_SECONDS_KEY: float,
+        DAMPEN_KEY: Duration,
     },
     QUOTES_SECTION: {
-        BACKOFF_SECONDS_KEY: float,
+        BACKOFF_KEY: Duration,
     },
     TRANSCRIPTS_SECTION: {
-        RETENTION_DAYS_KEY: int,
-        RESUME_SECONDS_KEY: float,
+        RETENTION_KEY: Duration,
+        RESUME_KEY: Duration,
         SCHEDULE_KEY: list,
     },
     LLM_SECTION: {
-        TIMEOUT_SECONDS_KEY: float,
+        TIMEOUT_KEY: Duration,
         MAX_OUTPUT_TOKENS_KEY: int,
         TEMPERATURE_KEY: float,
         THINKING_KEY: bool,
     },
     SUMMARIES_SECTION: {
-        RETENTION_DAYS_KEY: int,
+        RETENTION_KEY: Duration,
     },
     PRESENCE_SECTION: {
         TRANSCRIBING_KEY: str,
@@ -203,6 +226,9 @@ SETTING_KINDS: Mapping[type, str] = {
     float: "a number",
     bool: "true or false",
     list: "a list of lines",
+    Duration: (
+        "a span of time like '30s', '5m', or '1h30m', or 'forever' to turn it off"
+    ),
 }
 
 # How a complaint lists the names it was expecting instead.
@@ -258,6 +284,8 @@ def _parse_setting(
     try:
         if kind is list:
             return _parse_list(value)
+        if kind is Duration:
+            return duration.parse(value)
         return _parse_bool(value) if kind is bool else kind(value)
     except (TypeError, ValueError):
         problems.append(
@@ -508,53 +536,50 @@ class TTSConfig:
     # server that streams slowly but steadily is healthy, one that goes quiet
     # for this long is not.
     timeout_seconds: float = field(
-        default_factory=lambda: file_cfg.setting(TTS_SECTION, TIMEOUT_SECONDS_KEY, 30.0)
+        default_factory=lambda: file_cfg.setting(TTS_SECTION, TIMEOUT_KEY, 30.0)
     )
 
     # How long the player waits for the next piece of a clip before ending it.
     # Playback begins on the first chunk, so a synthesizer that stalls mid-word
     # leaves a thread holding the channel open until this expires.
     stall_seconds: float = field(
-        default_factory=lambda: file_cfg.setting(TTS_SECTION, STALL_SECONDS_KEY, 10.0)
+        default_factory=lambda: file_cfg.setting(TTS_SECTION, STALL_KEY, 10.0)
     )
 
     # How much of a phrase to have in hand before a clip starts playing. A
     # synthesizer that renders a phrase whole before sending any of it makes the
     # first chunk the slow one and every chunk after it instant, which is silence
     # in the middle of a clip that opens with a chime. Waiting for this much
-    # moves that wait to before the chime, where nobody hears it. Zero plays on
-    # the first chunk, as a synthesizer that streams as it renders wants.
-    lead_ms: float = field(
-        default_factory=lambda: file_cfg.setting(TTS_SECTION, LEAD_MS_KEY, 500.0)
+    # moves that wait to before the chime, where nobody hears it. Nothing at all
+    # plays on the first chunk, as a synthesizer that streams as it renders
+    # wants.
+    lead: float = field(
+        default_factory=lambda: file_cfg.setting(TTS_SECTION, LEAD_KEY, 0.5)
     )
 
     # How music played under a wait arrives and leaves. Up quickly, because the
     # gap it is covering has already started by the time it begins; down slowly,
     # because it is being replaced by a sentence and a fade that ends where the
     # first word starts sounds like one clip rather than two.
-    hold_fade_in_ms: float = field(
-        default_factory=lambda: file_cfg.setting(
-            TTS_SECTION, HOLD_FADE_IN_MS_KEY, 500.0
-        )
+    hold_fade_in: float = field(
+        default_factory=lambda: file_cfg.setting(TTS_SECTION, HOLD_FADE_IN_KEY, 0.5)
     )
-    hold_fade_out_ms: float = field(
-        default_factory=lambda: file_cfg.setting(
-            TTS_SECTION, HOLD_FADE_OUT_MS_KEY, 2000.0
-        )
+    hold_fade_out: float = field(
+        default_factory=lambda: file_cfg.setting(TTS_SECTION, HOLD_FADE_OUT_KEY, 2.0)
     )
 
     # How long a rendered clip survives on disk without being played. Aged by
     # mtime, which the cache refreshes on every hit, so a phrase still in use
-    # stays whatever its age. Any value below 1 disables the reaper.
-    cache_retention_days: int = field(
+    # stays whatever its age. Nothing at all disables the reaper.
+    cache_retention: float = field(
         default_factory=lambda: file_cfg.setting(
-            TTS_SECTION, CACHE_RETENTION_DAYS_KEY, 90
+            TTS_SECTION, CACHE_RETENTION_KEY, 90 * duration.DAY
         )
     )
 
     @property
     def lead_bytes(self) -> int:
-        return audio_cfg.playback_bytes(self.lead_ms)
+        return audio_cfg.playback_bytes(self.lead * MILLISECONDS_PER_SECOND)
 
 
 # ──────────────────────────────────────────────
@@ -591,7 +616,7 @@ class LLMConfig:
     # nothing is waiting on it in a voice channel — except the retelling, which
     # covers the wait with an announcement.
     timeout_seconds: float = field(
-        default_factory=lambda: file_cfg.setting(LLM_SECTION, TIMEOUT_SECONDS_KEY, 120.0)
+        default_factory=lambda: file_cfg.setting(LLM_SECTION, TIMEOUT_KEY, 120.0)
     )
 
     # A ceiling on what is *generated*, which is the only thing the endpoint's
@@ -643,11 +668,13 @@ class TranscriptConfig:
     )
     timezone: str = field(default_factory=lambda: _env_str("TZ", "America/Los_Angeles"))
 
-    # Days of transcripts to keep. Any value below 1 disables pruning entirely,
-    # so a mis-set setting cannot destroy the archive.
-    retention_days: int = field(
+    # How far back transcripts are kept. Nothing at all disables pruning
+    # entirely, which is the default, so a mis-set setting cannot destroy the
+    # archive. Age comes from the day in a filename, so a span shorter than a
+    # day keeps only what was filed today.
+    retention: float = field(
         default_factory=lambda: file_cfg.setting(
-            TRANSCRIPTS_SECTION, RETENTION_DAYS_KEY, -1
+            TRANSCRIPTS_SECTION, RETENTION_KEY, duration.NEVER
         )
     )
 
@@ -655,9 +682,7 @@ class TranscriptConfig:
     # channel that refills inside the window is one conversation with a gap in
     # it, not two. Zero seals on disconnect.
     resume_window_seconds: float = field(
-        default_factory=lambda: file_cfg.setting(
-            TRANSCRIPTS_SECTION, RESUME_SECONDS_KEY, 5.0
-        )
+        default_factory=lambda: file_cfg.setting(TRANSCRIPTS_SECTION, RESUME_KEY, 5.0)
     )
 
     # One file per connection, named for the moment the bot joined. Colons are
@@ -676,7 +701,7 @@ class TranscriptConfig:
 
     @property
     def retention_enabled(self) -> bool:
-        return self.retention_days >= 1
+        return self.retention > duration.NEVER
 
     @property
     def resume_enabled(self) -> bool:
@@ -703,13 +728,13 @@ class SummaryConfig:
         default_factory=lambda: Path(_env_str("SUMMARY_DIR", "/summaries"))
     )
 
-    # Days of summaries to keep, on the same terms as the transcripts they came
-    # from: any value below 1 keeps them forever, so a mis-set setting cannot
-    # destroy the archive. Longer than a transcript's is a sensible thing to
-    # want, a summary being a fraction of the size and most of the value.
-    retention_days: int = field(
+    # How far back summaries are kept, on the same terms as the transcripts
+    # they came from: nothing at all keeps them forever, so a mis-set setting
+    # cannot destroy the archive. Longer than a transcript's is a sensible thing
+    # to want, a summary being a fraction of the size and most of the value.
+    retention: float = field(
         default_factory=lambda: file_cfg.setting(
-            SUMMARIES_SECTION, RETENTION_DAYS_KEY, -1
+            SUMMARIES_SECTION, RETENTION_KEY, duration.NEVER
         )
     )
 
@@ -718,7 +743,7 @@ class SummaryConfig:
 
     @property
     def retention_enabled(self) -> bool:
-        return self.retention_days >= 1
+        return self.retention > duration.NEVER
 
 
 # ──────────────────────────────────────────────
@@ -726,11 +751,11 @@ class SummaryConfig:
 # ──────────────────────────────────────────────
 @dataclass(frozen=True)
 class ProcessConfig:
-    user_timeout_seconds: int = field(
-        default_factory=lambda: _env_int("USER_TIMEOUT_SECONDS", 60)
+    user_timeout: float = field(
+        default_factory=lambda: _env_duration("USER_TIMEOUT", duration.MINUTE)
     )
-    speech_flush_timeout_seconds: float = field(
-        default_factory=lambda: _env_float("SPEECH_FLUSH_TIMEOUT_SECONDS", 2.0)
+    speech_flush_timeout: float = field(
+        default_factory=lambda: _env_duration("SPEECH_FLUSH_TIMEOUT", 2.0)
     )
 
     # How often the maintenance task checks for stalled speech and idle users.
@@ -772,7 +797,7 @@ class ScoreboardConfig:
     # the tally in memory until shutdown, which still saves it.
     save_interval_seconds: float = field(
         default_factory=lambda: file_cfg.setting(
-            CREDITS_SECTION, SAVE_SECONDS_KEY, 5.0
+            CREDITS_SECTION, SAVE_KEY, 5.0
         )
     )
 
@@ -784,7 +809,7 @@ class ScoreboardConfig:
     # below zero keeps the tally off the channel, and still saves it.
     topic_interval_seconds: float = field(
         default_factory=lambda: file_cfg.setting(
-            CREDITS_SECTION, TOPIC_SECONDS_KEY, 10.0
+            CREDITS_SECTION, TOPIC_KEY, 10.0
         )
     )
 
@@ -813,7 +838,7 @@ class MoralityConfig:
     # where somebody is still mid-sentence, not for the argument they had five
     # minutes ago. 0 means nothing is ever a repeat.
     repeat_seconds: float = field(
-        default_factory=lambda: file_cfg.setting(FINES_SECTION, REPEAT_SECONDS_KEY, 5.0)
+        default_factory=lambda: file_cfg.setting(FINES_SECTION, REPEAT_KEY, 5.0)
     )
 
     # How long after being fined a speaker can ask what the word was and be
@@ -822,7 +847,7 @@ class MoralityConfig:
     # answers minutes later is a phrase that answers in the middle of something
     # else. 0 means the question is never answered.
     recall_seconds: float = field(
-        default_factory=lambda: file_cfg.setting(FINES_SECTION, RECALL_SECONDS_KEY, 10.0)
+        default_factory=lambda: file_cfg.setting(FINES_SECTION, RECALL_KEY, 10.0)
     )
 
     # How long a violation counts against how loudly the next one is announced.
@@ -830,7 +855,7 @@ class MoralityConfig:
     # their last one rather than at the top of some fixed period.
     backoff_seconds: float = field(
         default_factory=lambda: file_cfg.setting(
-            FINES_SECTION, BACKOFF_SECONDS_KEY, 300.0
+            FINES_SECTION, BACKOFF_KEY, 300.0
         )
     )
 
@@ -876,7 +901,7 @@ class MoralityConfig:
     # which is a question about an evening rather than about a flurry.
     dampen_seconds: float = field(
         default_factory=lambda: file_cfg.setting(
-            FINES_SECTION, DAMPEN_SECONDS_KEY, 3600.0
+            FINES_SECTION, DAMPEN_KEY, 3600.0
         )
     )
 
@@ -901,9 +926,9 @@ class MoralityConfig:
         """
         return replace(
             self,
-            repeat_seconds=_asked(REPEAT_SECONDS_KEY, config, self.repeat_seconds),
-            recall_seconds=_asked(RECALL_SECONDS_KEY, config, self.recall_seconds),
-            backoff_seconds=_asked(BACKOFF_SECONDS_KEY, config, self.backoff_seconds),
+            repeat_seconds=_span(REPEAT_KEY, config, self.repeat_seconds),
+            recall_seconds=_span(RECALL_KEY, config, self.recall_seconds),
+            backoff_seconds=_span(BACKOFF_KEY, config, self.backoff_seconds),
             backoff_step=_volume(
                 _fraction(
                     _asked(
@@ -915,7 +940,7 @@ class MoralityConfig:
                 _asked(VOLUME_FLOOR_KEY, config, self.volume_floor)
             ),
             dampen_after=_asked(DAMPEN_AFTER_KEY, config, self.dampen_after),
-            dampen_seconds=_asked(DAMPEN_SECONDS_KEY, config, self.dampen_seconds),
+            dampen_seconds=_span(DAMPEN_KEY, config, self.dampen_seconds),
         )
 
 
@@ -935,6 +960,24 @@ def _asked(key: str, config: Mapping[str, Any], default: SettingT) -> SettingT:
         return type(default)(written)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"'{key}' must be a number, not {written!r}: {exc}") from exc
+
+
+def _span(key: str, config: Mapping[str, Any], default: float) -> float:
+    """
+    One window a server wrote in a tool's config, as seconds.
+
+    `_asked` beside it reads the plain numbers — a percentage, a floor, a count.
+    A span is written as a span, so it parses as one, and the complaint names
+    the format rather than asking for a number nobody was going to write.
+    """
+    written = config.get(key)
+    if written is None:
+        return default
+
+    try:
+        return duration.parse(written)
+    except ValueError as exc:
+        raise ValueError(f"'{key}' is not a span of time: {exc}") from exc
 
 
 def _percent(fraction: float) -> float:
@@ -979,7 +1022,7 @@ class QuotesConfig:
     # one room says the same six things all night and the next does not.
     backoff_seconds: float = field(
         default_factory=lambda: file_cfg.setting(
-            QUOTES_SECTION, BACKOFF_SECONDS_KEY, 300.0
+            QUOTES_SECTION, BACKOFF_KEY, 300.0
         )
     )
 

@@ -29,6 +29,7 @@ from zoneinfo import ZoneInfo
 
 from miss_quote.config import file_cfg, transcript_cfg
 from miss_quote.transcript.schedule import ALWAYS, Schedule
+from miss_quote.utils import duration
 from miss_quote.utils.logging import get_logger
 from miss_quote.utils.slugs import slugify
 
@@ -405,13 +406,13 @@ class TranscriptWriter:
         self,
         directory: Path | None = None,
         timezone: str | None = None,
-        retention_days: int | None = None,
+        retention: float | None = None,
         schedules: Callable[[int, str], Schedule] | None = None,
     ) -> None:
         self._directory = Path(directory or transcript_cfg.directory)
         self._zone = ZoneInfo(timezone or transcript_cfg.timezone)
-        self._retention_days = (
-            transcript_cfg.retention_days if retention_days is None else retention_days
+        self._retention = (
+            transcript_cfg.retention if retention is None else retention
         )
         # A resolver rather than one schedule: which rooms are on the record is
         # per server and per channel, and the writer serves every one of them.
@@ -422,7 +423,7 @@ class TranscriptWriter:
 
     @property
     def retention_enabled(self) -> bool:
-        return self._retention_days >= 1
+        return self._retention > duration.NEVER
 
     def open(self, source: Source) -> TranscriptSession:
         """
@@ -469,7 +470,9 @@ class TranscriptWriter:
         if not self.retention_enabled:
             return []
 
-        cutoff = datetime.now(self._zone).date() - timedelta(days=self._retention_days)
+        # Taken back as a moment and then down to a day, because what a name
+        # carries is a date: a window shorter than a day leaves only today's.
+        cutoff = (datetime.now(self._zone) - timedelta(seconds=self._retention)).date()
         removed: list[Path] = []
 
         for path in self._directory.rglob(f"*{transcript_cfg.filename_suffix}"):
@@ -485,9 +488,9 @@ class TranscriptWriter:
 
             removed.append(path)
             logger.info(
-                "Pruned transcript %s (older than %d days).",
+                "Pruned transcript %s (older than %s).",
                 path.relative_to(self._directory),
-                self._retention_days,
+                duration.spoken(self._retention),
             )
 
         return removed

@@ -9,9 +9,10 @@ from miss_quote.summary.store import SummaryStore
 from miss_quote.summary.when import LATEST, When
 from miss_quote.transcript.schedule import Occurrence
 from miss_quote.transcript.writer import Source, Transcript
+from miss_quote.utils import duration
 
-KEEP_FOREVER = -1
-KEEP_A_WEEK = 7
+KEEP_FOREVER = -duration.DAY
+KEEP_A_WEEK = 7 * duration.DAY
 
 # Wide enough that a break is still one evening, narrow enough that two
 # evenings on one day stay two. The tool's default.
@@ -46,10 +47,10 @@ def _transcript(root: Path, name: str, source: Source = SOURCE) -> Transcript:
     return Transcript(path=path, source=source, opened=OPENED, closed=CLOSED, utterances=12)
 
 
-def _store(tmp_path: Path, retention_days: int = KEEP_FOREVER) -> SummaryStore:
+def _store(tmp_path: Path, retention: int = KEEP_FOREVER) -> SummaryStore:
     return SummaryStore(
         directory=tmp_path / "summaries",
-        retention_days=retention_days,
+        retention=retention,
         transcripts=tmp_path / "transcripts",
     )
 
@@ -709,7 +710,7 @@ def test_a_sitting_is_filed_under_the_name_it_was_given(tmp_path):
 
 
 def test_retention_drops_what_is_older_than_the_window(tmp_path):
-    store = _store(tmp_path, retention_days=KEEP_A_WEEK)
+    store = _store(tmp_path, retention=KEEP_A_WEEK)
     root = tmp_path / "transcripts"
 
     today = datetime.now().date()
@@ -726,7 +727,7 @@ def test_retention_drops_what_is_older_than_the_window(tmp_path):
 
 
 def test_retention_off_keeps_everything(tmp_path):
-    store = _store(tmp_path, retention_days=KEEP_FOREVER)
+    store = _store(tmp_path, retention=KEEP_FOREVER)
     root = tmp_path / "transcripts"
 
     stale = (datetime.now().date() - timedelta(days=3650)).strftime("%Y-%m-%d")

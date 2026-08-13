@@ -325,7 +325,7 @@ def _config(**channel) -> dict:
     return {
         "monitored_channels": {
             WATCHED: {"channel": POSTING_CHANNEL, "preamble": PREAMBLE, "empty": EMPTY,
-             "closing": CLOSING, "clause_window_seconds": CLAUSE_WINDOW}
+             "closing": CLOSING, "clause_window": CLAUSE_WINDOW}
             | channel
         }
     }
@@ -926,7 +926,7 @@ async def test_a_continuation_that_is_not_a_question_asks_nothing(summaries, mod
 
 
 async def test_a_channel_can_set_how_long_the_name_is_held(summaries, model):
-    tool, speech = _tool(address_window_seconds=DEFAULT_ADDRESS_WINDOW_SECONDS * 2)
+    tool, speech = _tool(address_window=DEFAULT_ADDRESS_WINDOW_SECONDS * 2)
     await tool.handle_utterance(_said("Miss Quote."), Session(WATCHED_SOURCE))
     _aged(tool, DEFAULT_ADDRESS_WINDOW_SECONDS + 1)
 
@@ -938,7 +938,7 @@ async def test_a_channel_can_set_how_long_the_name_is_held(summaries, model):
 async def test_a_window_of_zero_wants_the_whole_question_in_one_breath(
     summaries, model
 ):
-    tool, speech = _tool(address_window_seconds=0)
+    tool, speech = _tool(address_window=0)
 
     await tool.handle_utterance(_said("Miss Quote."), Session(WATCHED_SOURCE))
     await tool.handle_utterance(_said("What happened?"), Session(WATCHED_SOURCE))
@@ -959,8 +959,8 @@ async def test_the_whole_question_in_one_breath_never_holds_a_name(summaries, mo
 
 
 def test_a_window_that_is_not_a_number_will_not_start(summaries):
-    with pytest.raises(ValueError, match="address_window_seconds"):
-        _tool(address_window_seconds="fifteen")
+    with pytest.raises(ValueError, match="address_window"):
+        _tool(address_window="fifteen")
 
 
 # ── a clause in its own breath ────────────────
@@ -997,7 +997,7 @@ async def test_a_clause_in_a_second_breath_names_the_evening(summaries, model):
     The failure this exists for: "Miss Quote, what happened" is a whole question
     on its own, so answering it as it lands retells the wrong night.
     """
-    tool, speech = _tool(clause_window_seconds=PATIENT_CLAUSE_WINDOW)
+    tool, speech = _tool(clause_window=PATIENT_CLAUSE_WINDOW)
     model.answers = [SUMMARY, RETELLING]
     await tool.handle_finished(_transcript(summaries, WATCHED_SOURCE))
     asking = await _asking(tool, "Miss Quote, what happened")
@@ -1014,7 +1014,7 @@ async def test_a_clause_in_a_second_breath_names_the_evening(summaries, model):
 
 async def test_the_clause_is_waited_for_beside_the_preamble(summaries, model):
     """Not in front of it: the wait is free precisely because it is covered."""
-    tool, speech = _tool(clause_window_seconds=PATIENT_CLAUSE_WINDOW)
+    tool, speech = _tool(clause_window=PATIENT_CLAUSE_WINDOW)
     model.answers = [SUMMARY, RETELLING]
     await tool.handle_finished(_transcript(summaries, WATCHED_SOURCE))
 
@@ -1027,7 +1027,7 @@ async def test_the_clause_is_waited_for_beside_the_preamble(summaries, model):
 
 async def test_a_clause_naming_the_same_evening_changes_nothing(summaries, model):
     """"Last session" is what was already assumed, not a second thing to look up."""
-    tool, speech = _tool(clause_window_seconds=PATIENT_CLAUSE_WINDOW)
+    tool, speech = _tool(clause_window=PATIENT_CLAUSE_WINDOW)
     model.answers = [SUMMARY, RETELLING]
     await tool.handle_finished(_transcript(summaries, WATCHED_SOURCE))
     asking = await _asking(tool, "Miss Quote, what happened")
@@ -1055,7 +1055,7 @@ async def test_nothing_more_said_answers_the_evening_it_assumed(summaries, model
 
 async def test_a_question_that_named_its_evening_never_waits(summaries, model):
     """Anything spelled out is finished, and is answered as fast as it always was."""
-    tool, speech = _tool(clause_window_seconds=PATIENT_CLAUSE_WINDOW)
+    tool, speech = _tool(clause_window=PATIENT_CLAUSE_WINDOW)
     model.answers = [SUMMARY, RETELLING]
     await tool.handle_finished(_transcript(summaries, WATCHED_SOURCE))
 
@@ -1100,7 +1100,7 @@ async def test_a_clause_is_not_dropped_by_the_retelling_gate(summaries, model):
     The ask it belongs to is holding that lock while it waits, so a clause
     checked against the gate first would be dropped by the question waiting on it.
     """
-    tool, speech = _tool(clause_window_seconds=PATIENT_CLAUSE_WINDOW)
+    tool, speech = _tool(clause_window=PATIENT_CLAUSE_WINDOW)
     model.answers = [SUMMARY, RETELLING]
     await tool.handle_finished(_transcript(summaries, WATCHED_SOURCE))
     asking = await _asking(tool, "Miss Quote, what happened")
@@ -1115,7 +1115,7 @@ async def test_a_clause_is_not_dropped_by_the_retelling_gate(summaries, model):
 
 
 async def test_a_window_of_zero_answers_the_moment_it_is_asked(summaries, model):
-    tool, speech = _tool(clause_window_seconds=0)
+    tool, speech = _tool(clause_window=0)
     model.answers = [SUMMARY, RETELLING]
     await tool.handle_finished(_transcript(summaries, WATCHED_SOURCE))
 
@@ -1129,7 +1129,7 @@ async def test_a_window_of_zero_answers_the_moment_it_is_asked(summaries, model)
 
 async def test_an_evening_with_nothing_in_it_never_waits(summaries, model):
     """No clause can change a room that has never been written about."""
-    tool, speech = _tool(clause_window_seconds=PATIENT_CLAUSE_WINDOW)
+    tool, speech = _tool(clause_window=PATIENT_CLAUSE_WINDOW)
 
     await tool.handle_utterance(
         _said("Miss Quote, what happened"), Session(WATCHED_SOURCE)
@@ -1139,8 +1139,8 @@ async def test_an_evening_with_nothing_in_it_never_waits(summaries, model):
 
 
 async def test_a_clause_window_that_is_not_a_number_will_not_start(summaries):
-    with pytest.raises(ValueError, match="clause_window_seconds"):
-        _tool(clause_window_seconds="a moment")
+    with pytest.raises(ValueError, match="clause_window"):
+        _tool(clause_window="a moment")
 
 
 # ── one evening, several sessions ─────────────
@@ -1180,7 +1180,7 @@ async def test_an_evening_filed_in_halves_is_retold_as_one(summaries, model):
 
 async def test_a_channel_can_set_how_long_a_break_is(summaries, model):
     """Six minutes is one evening at the default and two at one minute."""
-    tool, speech = _tool(session_gap_minutes=1)
+    tool, speech = _tool(session_gap="1m")
     model.answers = [RETELLING]
 
     _filed(
@@ -1281,7 +1281,7 @@ async def test_a_day_with_no_notes_says_so_rather_than_saying_there_are_none(
 
 
 async def test_it_is_not_told_twice_inside_the_backoff(summaries, model):
-    tool, speech = _tool(backoff_seconds=300)
+    tool, speech = _tool(backoff=300)
     model.answers = [SUMMARY, RETELLING, RETELLING]
     await tool.handle_finished(_transcript(summaries, WATCHED_SOURCE))
 
@@ -1297,7 +1297,7 @@ async def test_a_different_evening_inside_the_backoff_is_still_answered(summarie
     The window holds off one story, not one channel. Somebody asking about last
     Thursday is asking a second question, and it has a different answer.
     """
-    tool, speech = _tool(backoff_seconds=300)
+    tool, speech = _tool(backoff=300)
     model.answers = [RETELLING]
 
     _filed(
@@ -1882,7 +1882,7 @@ async def test_a_room_with_nowhere_to_post_shows_nothing(summaries):
 async def test_an_interval_of_nothing_is_off(summaries):
     ticker = FakeTicker()
     tool, _ = _tool(
-        config=_watching(transcript_refresh_seconds=0), ticker=ticker
+        config=_watching(transcript_refresh=0), ticker=ticker
     )
 
     await tool.handle_utterance(_said("Anything."), Session(WATCHED_SOURCE))
@@ -1893,7 +1893,7 @@ async def test_an_interval_of_nothing_is_off(summaries):
 
 def test_an_interval_faster_than_discord_is_held_at_the_floor(summaries):
     """A twentieth of a second is not a faster feed, it is one running behind."""
-    tool, _ = _tool(config=_watching(transcript_refresh_seconds=0.05))
+    tool, _ = _tool(config=_watching(transcript_refresh=0.05))
 
     assert (
         tool._monitored[WATCHED_KEY].transcript_refresh_seconds
@@ -1902,8 +1902,8 @@ def test_an_interval_faster_than_discord_is_held_at_the_floor(summaries):
 
 
 def test_an_interval_that_is_not_a_number_stops_the_tool_from_starting(summaries):
-    with pytest.raises(ValueError, match="transcript_refresh_seconds"):
-        _tool(config=_watching(transcript_refresh_seconds="often"))
+    with pytest.raises(ValueError, match="transcript_refresh"):
+        _tool(config=_watching(transcript_refresh="often"))
 
 
 async def test_a_server_showing_nothing_has_nothing_to_run(summaries):
@@ -1916,7 +1916,7 @@ async def test_a_server_showing_nothing_has_nothing_to_run(summaries):
 async def test_the_service_writes_what_the_room_says(summaries):
     ticker = FakeTicker()
     tool, _ = _tool(
-        config=_watching(transcript_refresh_seconds=MINIMUM_TRANSCRIPT_REFRESH_SECONDS),
+        config=_watching(transcript_refresh=MINIMUM_TRANSCRIPT_REFRESH_SECONDS),
         ticker=ticker,
     )
     running = asyncio.create_task(tool.run())

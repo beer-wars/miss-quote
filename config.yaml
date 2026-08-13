@@ -8,6 +8,17 @@
 # ports, directories, and the token — because those are what a manifest already
 # has and what a secret has to stay in. See .env.example.
 
+# Every setting naming a span of time — a timeout, a backoff, a retention, a
+# fade — is written with the unit on the value: `30s`, `5m`, `2h`, `90d`, `1w`,
+# `500ms`. Units compound and are summed, so `1h30m` is ninety minutes. A bare
+# number is seconds.
+#
+# A span can be turned off three ways, which mean the same thing and read
+# differently depending on the setting: `forever`, `never`, 0, or a negative
+# span like `-1d`. A retention of `forever` keeps everything; a backoff of 0
+# answers every time. Note that `off` and `no` are *not* among them — YAML reads
+# both as booleans before the setting is ever parsed.
+
 # Settings that apply to the whole deployment rather than to one server.
 #
 # Every one of them has a default, so this block is optional in its entirety and
@@ -27,37 +38,37 @@ settings:
     # for a single wait rather than for the whole clip, so a long phrase
     # arriving steadily is not cut off for taking a long time.
     #
-    # timeout_seconds: 30
+    # timeout: 30s
 
     # How long the player waits mid-clip before giving up on the rest of it.
     #
-    # stall_seconds: 10
+    # stall: 10s
 
-    # How much speech to have in hand before a clip starts, in milliseconds.
-    # Covers a synthesizer that renders a phrase whole before sending any of it,
-    # which otherwise leaves a gap between a chime and the words behind it. 0
-    # starts on the first chunk.
+    # How much speech to have in hand before a clip starts. Covers a
+    # synthesizer that renders a phrase whole before sending any of it, which
+    # otherwise leaves a gap between a chime and the words behind it. 0 starts
+    # on the first chunk.
     #
-    # lead_ms: 500
+    # lead: 500ms
 
-    # How music played under a wait arrives and leaves, in milliseconds. Only
-    # the summary tool asks for any, and only for a channel that named a clip;
-    # see `hold_music` further down.
+    # How music played under a wait arrives and leaves. Only the summary tool
+    # asks for any, and only for a channel that named a clip; see `hold_music`
+    # further down.
     #
     # Up quickly, because the gap the music is covering has already started by
     # the time it begins. Down slowly, because what replaces it is a sentence,
     # and the fade is timed to end where the first word starts. 0 for either is
     # no fade at that end, which is a cut.
     #
-    # hold_fade_in_ms: 500
-    # hold_fade_out_ms: 2000
+    # hold_fade_in: 500ms
+    # hold_fade_out: 2s
 
-    # Days a rendered clip survives in SPEECH_DIR/cache without being played,
-    # counted from the last time it was. 0, or any value below 1, keeps them
-    # forever. Chimes live in SPEECH_DIR/chimes and are never reaped, whatever
-    # this says.
+    # How long a rendered clip survives in SPEECH_DIR/cache without being
+    # played, counted from the last time it was. `forever`, 0, or a negative
+    # span keeps them. Chimes live in SPEECH_DIR/chimes and are never reaped,
+    # whatever this says.
     #
-    # cache_retention_days: 90
+    # cache_retention: 90d
 
   # The running tally the `scoreboard` tool keeps. Where it is written down is
   # CREDITS_FILE.
@@ -68,17 +79,17 @@ settings:
     # currency: credit
 
     # How often a changed tally is written to disk. Cheap, so it is quick: a pod
-    # killed outright loses this many seconds of fines. 0, or below, keeps the
-    # tally in memory and writes it only on shutdown.
+    # killed outright loses this much of an evening's fines. 0, or below, keeps
+    # the tally in memory and writes it only on shutdown.
     #
-    # save_seconds: 5
+    # save: 5s
 
     # How often a changed tally is published to the voice channel topic.
     # Discord's bucket for it is roughly six a second, so this is set by how
     # often a tally is worth reading rather than by a rate limit. 0, or below,
     # keeps the tally off the channel, and still counts and saves it.
     #
-    # topic_seconds: 10
+    # topic: 10s
 
   # How a fine from `verbal-morality` is announced. What one is worth is the
   # scoreboard's business, above.
@@ -92,14 +103,14 @@ settings:
     # How soon after being fined a speaker is told they are "also fined" rather
     # than hearing the whole sentence again. 0 turns the second wording off.
     #
-    # repeat_seconds: 5
+    # repeat: 5s
 
     # How long after being fined a speaker can ask "what did I say" and be told
     # the word. The announcement names the fine and never the word, so this is
     # the only way to hear it; the window is what keeps a phrase that common
     # from being one the bot is always answering. 0 never answers.
     #
-    # recall_seconds: 10
+    # recall: 10s
 
     # How long a violation counts against how loudly the next one is announced,
     # and how much each one inside that window takes off. A sliding window, so
@@ -110,7 +121,7 @@ settings:
     # so 5% is a step somebody notices rather than the half a decibel it works
     # out as otherwise. Every volume in this file reads that way.
     #
-    # backoff_seconds: 300
+    # backoff: 5m
     # backoff_percent: 5
 
     # The quietest a fine is announced once somebody has sworn enough inside the
@@ -137,7 +148,7 @@ settings:
     # is a chime from the first.
     #
     # dampen_after: -1
-    # dampen_seconds: 3600
+    # dampen: 1h
 
   # The `quotes` tool, for every server that enables it. The triggers and the
   # lines themselves are a YAML file at QUOTES_FILE.
@@ -150,20 +161,22 @@ settings:
     # saying the same word hears the line once. 0, or below, answers every
     # trigger every time.
     #
-    # backoff_seconds: 300
+    # backoff: 5m
 
   # Where transcripts are written is TRANSCRIPT_DIR, and what clock they are
   # stamped with is TZ.
   transcripts:
-    # Days of transcripts to keep. -1, or any value below 1, keeps them forever.
+    # How far back transcripts are kept. `forever`, 0, or a negative span keeps
+    # them all. Age comes from the day in a filename, so a span shorter than a
+    # day leaves only what was filed today.
     #
-    # retention_days: -1
+    # retention: forever
 
     # How long a transcript is held open for a reconnect to the same channel. A
     # channel that empties and refills inside the window is one conversation
     # with a gap in it rather than two. 0 seals it on disconnect.
     #
-    # resume_seconds: 5
+    # resume: 5s
 
     # What a room listed under a `summary` tool's `monitored_channels` falls
     # back to when it names no windows of its own. Which rooms are written down
@@ -213,7 +226,7 @@ settings:
     # that seals as the pod goes down is summarized inside the shutdown, and
     # what does not finish there is lost — the transcript survives either way.
     #
-    # timeout_seconds: 120
+    # timeout: 2m
 
     # A ceiling on what is generated. Not the context window and not the whole
     # request: the input is not counted against it.
@@ -243,11 +256,12 @@ settings:
   # transcripts' tree — a directory per server and per channel — and each file
   # is named for the transcript it summarizes.
   summaries:
-    # Days of summaries to keep. -1, or any value below 1, keeps them forever.
+    # How far back summaries are kept, on the same terms as the transcripts
+    # they came from: `forever`, 0, or a negative span keeps them all.
     # Longer than the transcripts is a sensible thing to want: a summary is a
     # fraction of the size and most of the value.
     #
-    # retention_days: -1
+    # retention: forever
 
 # Servers the bot may join, by ID. Everything about a server lives under its ID.
 #
@@ -295,7 +309,7 @@ servers:
       # one everybody in the next has too. What this server hears and the others
       # do not is `additional_quotes` below. A trigger that has just fired goes
       # quiet for a while, so a channel that keeps saying the same word only
-      # hears the joke once; how long is settings.quotes.backoff_seconds, which
+      # hears the joke once; how long is settings.quotes.backoff, which
       # is not per server either.
       #
       # Once the line has been said, naming what it came from — "what is
@@ -318,13 +332,13 @@ servers:
           # the rest of the channel talking holds nothing up. 0 says the line
           # where it was heard, interruption and all.
           #
-          # quiet_seconds: 1
+          # quiet: 1s
 
           # How long a trigger stays spent after it fires, for this server
-          # alone. Left out, it is settings.quotes.backoff_seconds. 0, or
+          # alone. Left out, it is settings.quotes.backoff. 0, or
           # below, answers every trigger every time.
           #
-          # backoff_seconds: 300
+          # backoff: 5m
 
           # The odds a trigger is answered at all, between 0 and 1. Everything
           # by default; at a half a phrase comes back about every other time it
@@ -345,7 +359,7 @@ servers:
           # been said there is nothing to answer. 0 stops the tool asking at
           # all, for a deployment that wants the lines and not the game.
           #
-          # answer_seconds: 10
+          # answer: 10s
 
           # How long after the first correct answer a second one still counts.
           # The first answer takes the round; anyone inside this window is paid
@@ -353,7 +367,7 @@ servers:
           # apart both knew it and which of them the transcriber returned first
           # is not a fact about who was faster. 0 pays only whoever was first.
           #
-          # tie_seconds: 1
+          # tie: 1s
 
           # Endings the announcement picks from, one at random each time. These
           # are ADDED to the ones the tool ships with rather than replacing
@@ -402,13 +416,13 @@ servers:
           #
           # Every announcement names the winner, so a draw renders
           # `generated_response_count` phrases per person on the roster above.
-          # They are kept for `settings.tts.cache_retention_days` (90 by
+          # They are kept for `settings.tts.cache_retention` (90 by
           # default), and each restart writes a fresh catalogue — a bot
           # restarted daily leaves a few thousand clips behind before the
           # reaper starts clearing them. Shorten that retention, or lengthen
           # this, on a deployment where the speech volume is tight.
           #
-          # generated_interval_seconds: 3600
+          # generated_interval: 1h
 
           # Whether whoever set a line off is barred from naming it. They have
           # the trigger and the title in front of them and had to recall
@@ -675,11 +689,11 @@ servers:
               # per channel, so asking about a different night is a different
               # question and gets an answer.
               #
-              # backoff_seconds: 120
+              # backoff: 2m
 
               # How long the room can sit quiet before the rest of the night
               # counts as a different one. A transcript is one connection, and
-              # settings.transcripts.resume_seconds is a handful of seconds —
+              # settings.transcripts.resume is a handful of seconds —
               # enough for a client dropping, not for a pod restart or for a
               # room that empties while everybody refills a glass. Past that the
               # evening is filed in pieces, and this is what puts it back
@@ -689,7 +703,7 @@ servers:
               # holds a session open and delays the summary behind it, while
               # this is read long afterwards off files already on disk.
               #
-              # session_gap_minutes: 10
+              # session_gap: 10m
 
               # What plays while the model is still thinking, and what plays
               # when there is nothing to think about. All three are rendered at
@@ -777,7 +791,7 @@ servers:
               # thing its speaker says can finish the question. Per speaker, and
               # let go once it has asked something. 0 wants it in one breath.
               #
-              # address_window_seconds: 15
+              # address_window: 15s
 
               # The same split one word further along. "Miss Quote, what
               # happened on the twenty ninth" also breaks after the trigger, and
@@ -792,7 +806,7 @@ servers:
               # spelled out is answered as immediately as it ever was. 0 answers
               # the moment the question lands.
               #
-              # clause_window_seconds: 1.5
+              # clause_window: 1.5s
               #
               # What the bot answers to, in the spellings a transcriber returns
               # for a name it has never been told. The plural and the past tense
@@ -837,7 +851,7 @@ servers:
               # a rate limit rather than failing, so asking for more only buys a
               # feed that silently runs behind. 0 turns the feed off.
               #
-              # transcript_refresh_seconds: 2
+              # transcript_refresh: 2s
 
       # Says things out loud. Every other tool that answers a channel goes
       # through this one, so a server without it hears nothing: fines are still
@@ -893,7 +907,7 @@ servers:
           # announcement: "{user}, you are fined {credits} for {violations} of the verbal morality statute."
 
           # Optional, and the same placeholders. Said instead when the same
-          # speaker is fined again inside `repeat_seconds`, below —
+          # speaker is fined again inside `repeat`, below —
           # reading the whole sentence out again sounds like a bot that has lost
           # track of what it just said.
           #
@@ -902,7 +916,7 @@ servers:
           # How somebody asks what they were just fined for, and what they are
           # told. The announcement above names the fine and never the word, so
           # this is the only way to hear it. Answered only inside
-          # `recall_seconds`, below, which is the whole gate: outside it the
+          # `recall`, below, which is the whole gate: outside it the
           # question is somebody talking to the room.
           #
           # The triggers REPLACE the ones below rather than adding to them, and
@@ -930,13 +944,13 @@ servers:
           # server electing into something, and a typo quietly ignored leaves
           # one channel wondering why it sounds like the other one.
           #
-          # repeat_seconds: 5
-          # recall_seconds: 10
-          # backoff_seconds: 300
+          # repeat: 5s
+          # recall: 10s
+          # backoff: 5m
           # backoff_percent: 5
           # volume_floor: 0.25
           # dampen_after: 1
-          # dampen_seconds: 300
+          # dampen: 5m
 
   876543210987654321:
     alias: second-server

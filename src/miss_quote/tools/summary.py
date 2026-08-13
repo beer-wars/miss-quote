@@ -83,7 +83,7 @@ The writing is a service rather than part of the utterance path, which is what
 keeps it inside Discord's rate limit. Editing a message is about five requests
 every five seconds per channel, so `handle_utterance` only adds to a ring and one
 loop per room writes what has changed and then waits out
-`transcript_refresh_seconds` — measured from the end of the write, so a slow
+`transcript_refresh` — measured from the end of the write, so a slow
 Discord slows the feed instead of queueing behind it. Nothing is written unless
 something was said. See `Summary._ticking` and `bot.ticker`.
 
@@ -121,6 +121,7 @@ from miss_quote.summary.when import When
 from miss_quote.tools.base import Finder, Tool, ToolContext
 from miss_quote.tools.tts import Tts
 from miss_quote.transcript.writer import Source, Transcript, TranscriptSession, Utterance
+from miss_quote.utils import duration
 from miss_quote.utils.logging import get_logger
 from miss_quote.utils.phrases import NOTHING, normalized, pattern, spoken
 from miss_quote.utils.slugs import slugify
@@ -134,8 +135,8 @@ PROMPT_KEY = "prompt"
 RETELLING_PROMPT_KEY = "retelling_prompt"
 RETELLING_WORDS_KEY = "retelling_words"
 MINIMUM_UTTERANCES_KEY = "minimum_utterances"
-BACKOFF_SECONDS_KEY = "backoff_seconds"
-SESSION_GAP_MINUTES_KEY = "session_gap_minutes"
+BACKOFF_KEY = "backoff"
+SESSION_GAP_KEY = "session_gap"
 PREAMBLE_KEY = "preamble"
 EMPTY_KEY = "empty"
 MISSING_KEY = "missing"
@@ -144,13 +145,13 @@ HOLD_MUSIC_KEY = "hold_music"
 HOLD_VOLUME_KEY = "hold_volume"
 NAME_KEY = "name"
 TRIGGERS_KEY = "triggers"
-ADDRESS_WINDOW_SECONDS_KEY = "address_window_seconds"
-CLAUSE_WINDOW_SECONDS_KEY = "clause_window_seconds"
+ADDRESS_WINDOW_KEY = "address_window"
+CLAUSE_WINDOW_KEY = "clause_window"
 POST_TRANSCRIPTS_KEY = "post_transcripts"
 TRANSCRIPT_LINES_KEY = "transcript_lines"
 PINNED_SESSIONS_KEY = "pinned_sessions"
 TRANSCRIPT_LINE_LIMIT_KEY = "transcript_line_limit"
-TRANSCRIPT_REFRESH_SECONDS_KEY = "transcript_refresh_seconds"
+TRANSCRIPT_REFRESH_KEY = "transcript_refresh"
 
 # Everything a channel block may say. Anything else in one is a setting nothing
 # reads, on the same reasoning as a stray key in a tool block: a channel quietly
@@ -166,8 +167,8 @@ CHANNEL_KEYS = (
     RETELLING_PROMPT_KEY,
     RETELLING_WORDS_KEY,
     MINIMUM_UTTERANCES_KEY,
-    BACKOFF_SECONDS_KEY,
-    SESSION_GAP_MINUTES_KEY,
+    BACKOFF_KEY,
+    SESSION_GAP_KEY,
     PREAMBLE_KEY,
     EMPTY_KEY,
     MISSING_KEY,
@@ -176,11 +177,11 @@ CHANNEL_KEYS = (
     HOLD_VOLUME_KEY,
     NAME_KEY,
     TRIGGERS_KEY,
-    ADDRESS_WINDOW_SECONDS_KEY,
-    CLAUSE_WINDOW_SECONDS_KEY,
+    ADDRESS_WINDOW_KEY,
+    CLAUSE_WINDOW_KEY,
     POST_TRANSCRIPTS_KEY,
     TRANSCRIPT_LINES_KEY,
-    TRANSCRIPT_REFRESH_SECONDS_KEY,
+    TRANSCRIPT_REFRESH_KEY,
     TRANSCRIPT_LINE_LIMIT_KEY,
     PINNED_SESSIONS_KEY,
 )
@@ -211,7 +212,7 @@ NEVER = 0.0
 # resume window and should not be set to match it: the resume window holds a
 # session open and delays everything behind it, while this is read long after,
 # from names and files that are already on disk.
-DEFAULT_SESSION_GAP_MINUTES = 10.0
+DEFAULT_SESSION_GAP = 10 * duration.MINUTE
 
 # What plays while the model is still thinking, and what plays when there is
 # nothing to think about. Both are rendered at startup, along with the line
@@ -420,10 +421,6 @@ HEADER = "{channel} — {when}"
 HEADER_TIMESTAMP_FORMAT = "%a %d %b %Y, %H:%M %Z"
 
 LIST_SEPARATOR = ", "
-
-# What a window is measured in, for the complaint when one will not parse.
-SECONDS = "seconds"
-MINUTES = "minutes"
 
 
 def _today() -> date:
@@ -940,7 +937,7 @@ class Summary(Tool):
         An ASR returns utterances rather than sentences, and it splits wherever
         the speaker paused, so "Miss Quote, what happened on the twenty ninth"
         arrives as two lines about as often as one. Neither half asks anything by
-        itself. The name is held for `address_window_seconds` so that the next
+        itself. The name is held for `address_window` so that the next
         thing its speaker says can be the question.
 
         The whole sentence is tried first, so nothing about an ordinary
@@ -1421,17 +1418,11 @@ def _channel(
             DEFAULT_MINIMUM_UTTERANCES,
         ),
         backoff_seconds=_span(
-            BACKOFF_SECONDS_KEY,
-            raw.get(BACKOFF_SECONDS_KEY),
-            DEFAULT_BACKOFF_SECONDS,
-            SECONDS,
+            BACKOFF_KEY, raw.get(BACKOFF_KEY), DEFAULT_BACKOFF_SECONDS
         ),
         session_gap=timedelta(
-            minutes=_span(
-                SESSION_GAP_MINUTES_KEY,
-                raw.get(SESSION_GAP_MINUTES_KEY),
-                DEFAULT_SESSION_GAP_MINUTES,
-                MINUTES,
+            seconds=_span(
+                SESSION_GAP_KEY, raw.get(SESSION_GAP_KEY), DEFAULT_SESSION_GAP
             )
         ),
         preamble=str(raw.get(PREAMBLE_KEY) or DEFAULT_PREAMBLE),
@@ -1445,16 +1436,14 @@ def _channel(
         address=pattern(spoken(NAME_KEY, raw.get(NAME_KEY), DEFAULT_NAME)),
         triggers=pattern(spoken(TRIGGERS_KEY, raw.get(TRIGGERS_KEY), DEFAULT_TRIGGERS)),
         address_window_seconds=_span(
-            ADDRESS_WINDOW_SECONDS_KEY,
-            raw.get(ADDRESS_WINDOW_SECONDS_KEY),
+            ADDRESS_WINDOW_KEY,
+            raw.get(ADDRESS_WINDOW_KEY),
             DEFAULT_ADDRESS_WINDOW_SECONDS,
-            SECONDS,
         ),
         clause_window_seconds=_span(
-            CLAUSE_WINDOW_SECONDS_KEY,
-            raw.get(CLAUSE_WINDOW_SECONDS_KEY),
+            CLAUSE_WINDOW_KEY,
+            raw.get(CLAUSE_WINDOW_KEY),
             DEFAULT_CLAUSE_WINDOW_SECONDS,
-            SECONDS,
         ),
         post_transcripts=bool(raw.get(POST_TRANSCRIPTS_KEY, POST_TRANSCRIPTS)),
         transcript_lines=_whole(
@@ -1473,7 +1462,7 @@ def _channel(
             DEFAULT_PINNED_SESSIONS,
         ),
         transcript_refresh_seconds=_paced(
-            raw.get(TRANSCRIPT_REFRESH_SECONDS_KEY), DEFAULT_TRANSCRIPT_REFRESH_SECONDS
+            raw.get(TRANSCRIPT_REFRESH_KEY), DEFAULT_TRANSCRIPT_REFRESH_SECONDS
         ),
     )
 
@@ -1489,16 +1478,14 @@ def _paced(value: Any, default: float) -> float:
     because what was meant is plain and the nearest thing to it is a working
     feed.
     """
-    asked = _span(
-        TRANSCRIPT_REFRESH_SECONDS_KEY, value, default, SECONDS
-    )
+    asked = _span(TRANSCRIPT_REFRESH_KEY, value, default)
 
     if asked <= NEVER or asked >= MINIMUM_TRANSCRIPT_REFRESH_SECONDS:
         return asked
 
     logger.warning(
         "'%s' of %.2f is faster than Discord will take; holding it at %.2f.",
-        TRANSCRIPT_REFRESH_SECONDS_KEY,
+        TRANSCRIPT_REFRESH_KEY,
         asked,
         MINIMUM_TRANSCRIPT_REFRESH_SECONDS,
     )
@@ -1641,17 +1628,15 @@ def _whole(key: str, value: Any, default: int) -> int:
         raise ValueError(f"'{key}' must be a whole number, not {value!r}: {exc}") from exc
 
 
-def _span(key: str, value: Any, default: float, unit: str) -> float:
-    """A window from the channel's settings, or the default it did not set."""
+def _span(key: str, value: Any, default: float) -> float:
+    """A window from the channel's settings, as seconds, or its default."""
     if value is None:
         return default
 
     try:
-        return float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"'{key}' must be a number of {unit}, not {value!r}: {exc}"
-        ) from exc
+        return duration.parse(value)
+    except ValueError as exc:
+        raise ValueError(f"'{key}' is not a span of time: {exc}") from exc
 
 
 def _loudness(key: str, value: Any, default: float) -> float:

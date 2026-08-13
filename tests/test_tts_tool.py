@@ -400,7 +400,7 @@ async def test_the_words_are_waited_for_before_the_chime(speech, chime):
 
 async def test_no_head_start_plays_on_the_first_chunk(speech, chime, monkeypatch):
     """A synthesizer that streams as it renders needs nothing held back."""
-    monkeypatch.setattr(tts_tool, "tts_cfg", replace(tts_cfg, lead_ms=NO_HEAD_START))
+    monkeypatch.setattr(tts_tool, "tts_cfg", replace(tts_cfg, lead=NO_HEAD_START))
     speech.chunks = CHUNKS
 
     leading = await _first(_tool()._announce(WORDS, chime))

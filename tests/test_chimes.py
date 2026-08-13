@@ -207,6 +207,6 @@ async def test_a_chime_outlives_the_speech_cache_reaper(tmp_path):
     chime = speech / "chimes" / CLIP_FILE
     _write_clip(chime)
 
-    SpeechCache(directory=speech / "cache", retention_days=1)
+    SpeechCache(directory=speech / "cache", retention=1)
 
     assert chime.is_file()

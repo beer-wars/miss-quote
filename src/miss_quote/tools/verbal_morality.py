@@ -30,7 +30,7 @@ keeps earning them. See `RecentViolations`.
 
 Past a point, turning the sentence down is not enough and it stops being said at
 all. A speaker gets `dampen_after` fines read out in full inside
-`dampen_seconds`, and once that is spent a single-credit fine is the chime on its
+`dampen`, and once that is spent a single-credit fine is the chime on its
 own — the room has heard the wording, and what is left to convey is that it
 happened. A fine worth more than one credit is always said in full, being a thing
 somebody has just done rather than the one the channel has heard all evening. Off
@@ -41,12 +41,12 @@ is counted and not announced. The speaker plays one clip at a time and returns
 when it is finished, so waiting for a turn would leave the channel working
 through a backlog of fines for things said a minute ago.
 
-A speaker fined again within `repeat_seconds` gets the second wording — "you are
+A speaker fined again within `repeat` gets the second wording — "you are
 also fined" — because reading the whole sentence out again sounds like a bot that
 has lost track of what it just said.
 
 The announcement names the fine and never the word, so somebody who missed it
-can ask: "what did I say" inside `recall_seconds` is answered with whatever they
+can ask: "what did I say" inside `recall` is answered with whatever they
 were last fined for. The window is the whole gate, which is what keeps a phrase
 that common from being one the tool is always answering — outside it the question
 is somebody talking to the room. See `_recall`.
@@ -237,7 +237,7 @@ class RecentViolations(Recent):
     """
     How much somebody has sworn lately, and how loudly to say so.
 
-    A `backoff_seconds` after their last one, a speaker is back to being
+    A `backoff` after their last one, a speaker is back to being
     announced at whatever loudness the channel asked for.
 
     Every forbidden word is recorded, on the same terms as the fine: somebody who

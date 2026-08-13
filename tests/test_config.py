@@ -3,6 +3,8 @@ from datetime import UTC, datetime
 
 import pytest
 
+from miss_quote.utils import duration
+
 SETTINGS_FILE = "config.yaml"
 
 
@@ -50,7 +52,7 @@ def test_config_reads_environment_values(monkeypatch) -> None:
 
 def test_the_head_start_is_measured_in_playback_bytes(monkeypatch, tmp_path) -> None:
     """A duration is the only sane unit to configure; the player wants bytes."""
-    reloaded = _reload_with_setting(monkeypatch, tmp_path, "tts", "lead_ms", 500)
+    reloaded = _reload_with_setting(monkeypatch, tmp_path, "tts", "lead", "500ms")
     playback = reloaded.audio_cfg
     half_a_second = (
         playback.playback_sample_rate
@@ -63,7 +65,7 @@ def test_the_head_start_is_measured_in_playback_bytes(monkeypatch, tmp_path) -> 
 
 
 def test_no_head_start_waits_for_nothing(monkeypatch, tmp_path) -> None:
-    reloaded = _reload_with_setting(monkeypatch, tmp_path, "tts", "lead_ms", 0)
+    reloaded = _reload_with_setting(monkeypatch, tmp_path, "tts", "lead", 0)
 
     assert reloaded.tts_cfg.lead_bytes == 0
 
@@ -72,10 +74,12 @@ def test_the_fades_over_a_wait_have_defaults_and_can_be_set(
     monkeypatch, tmp_path
 ) -> None:
     """Up quickly and down slowly, unless a deployment says otherwise."""
-    reloaded = _reload_with_setting(monkeypatch, tmp_path, "tts", "hold_fade_in_ms", 250)
+    reloaded = _reload_with_setting(
+        monkeypatch, tmp_path, "tts", "hold_fade_in", "250ms"
+    )
 
-    assert reloaded.tts_cfg.hold_fade_in_ms == 250.0
-    assert reloaded.tts_cfg.hold_fade_out_ms == 2000.0
+    assert reloaded.tts_cfg.hold_fade_in == 0.25
+    assert reloaded.tts_cfg.hold_fade_out == 2.0
 
 
 def test_the_playback_volume_is_read_as_a_scale(monkeypatch) -> None:
@@ -169,7 +173,7 @@ def test_a_backoff_step_above_everything_reaches_the_floor_in_one(
 
 def test_the_backoff_window_is_read_in_seconds(monkeypatch, tmp_path) -> None:
     reloaded = _reload_with_setting(
-        monkeypatch, tmp_path, "fines", "backoff_seconds", 45
+        monkeypatch, tmp_path, "fines", "backoff", 45
     )
 
     assert reloaded.morality_cfg.backoff_seconds == 45.0
@@ -190,7 +194,7 @@ def test_the_dampening_budget_is_read_as_a_count(monkeypatch, tmp_path) -> None:
 
 def test_the_dampening_window_is_read_in_seconds(monkeypatch, tmp_path) -> None:
     reloaded = _reload_with_setting(
-        monkeypatch, tmp_path, "fines", "dampen_seconds", 90
+        monkeypatch, tmp_path, "fines", "dampen", 90
     )
 
     assert reloaded.morality_cfg.dampen_seconds == 90.0
@@ -204,7 +208,7 @@ def test_the_dampening_window_defaults_to_an_hour(monkeypatch, tmp_path) -> None
 
 def test_a_server_overrides_only_what_it_names(monkeypatch, tmp_path) -> None:
     """The deployment's answer stands for everything the server left out."""
-    reloaded = _reload_with_setting(monkeypatch, tmp_path, "fines", "recall_seconds", 45)
+    reloaded = _reload_with_setting(monkeypatch, tmp_path, "fines", "recall", 45)
     fines = reloaded.morality_cfg.overridden({"dampen_after": 3})
 
     assert fines.dampen_after == 3
@@ -242,8 +246,8 @@ def test_a_server_setting_that_is_not_a_number_is_refused(monkeypatch, tmp_path)
     """
     reloaded = _reload_without_settings(monkeypatch, tmp_path)
 
-    with pytest.raises(ValueError, match="repeat_seconds"):
-        reloaded.morality_cfg.overridden({"repeat_seconds": "a moment"})
+    with pytest.raises(ValueError, match="repeat"):
+        reloaded.morality_cfg.overridden({"repeat": "a moment"})
 
 
 def test_the_currency_defaults_to_credits(monkeypatch, tmp_path) -> None:
@@ -272,7 +276,7 @@ def test_the_topic_is_published_less_often_than_the_tally_is_saved() -> None:
 def test_publishing_stops_at_a_topic_interval_of_zero(monkeypatch, tmp_path) -> None:
     """So a deployment can keep the tally without touching a channel topic."""
     reloaded = _reload_with_setting(
-        monkeypatch, tmp_path, "credits", "topic_seconds", 0
+        monkeypatch, tmp_path, "credits", "topic", 0
     )
 
     assert reloaded.scoreboard_cfg.topic_interval_seconds == 0
@@ -281,7 +285,7 @@ def test_publishing_stops_at_a_topic_interval_of_zero(monkeypatch, tmp_path) -> 
 
 def test_counting_stops_at_a_save_interval_of_zero(monkeypatch, tmp_path) -> None:
     """Which leaves the tally in memory until shutdown writes it."""
-    reloaded = _reload_with_setting(monkeypatch, tmp_path, "credits", "save_seconds", 0)
+    reloaded = _reload_with_setting(monkeypatch, tmp_path, "credits", "save", 0)
 
     assert reloaded.scoreboard_cfg.save_interval_seconds == 0
 
@@ -354,7 +358,7 @@ def test_defaults_name_no_particular_deployment(monkeypatch) -> None:
 def test_retention_defaults_to_keep_forever(monkeypatch, tmp_path) -> None:
     reloaded = _reload_without_settings(monkeypatch, tmp_path)
 
-    assert reloaded.transcript_cfg.retention_days == -1
+    assert reloaded.transcript_cfg.retention == duration.NEVER
     assert reloaded.transcript_cfg.retention_enabled is False
 
 
@@ -362,11 +366,11 @@ def test_a_setting_the_file_does_not_mention_keeps_its_default(
     monkeypatch, tmp_path
 ) -> None:
     """Nothing in the block is required; saying one thing must not reset the rest."""
-    reloaded = _reload_with_setting(monkeypatch, tmp_path, "tts", "stall_seconds", 3)
+    reloaded = _reload_with_setting(monkeypatch, tmp_path, "tts", "stall", 3)
 
     assert reloaded.tts_cfg.stall_seconds == 3.0
     assert reloaded.tts_cfg.timeout_seconds == 30.0
-    assert reloaded.tts_cfg.cache_retention_days == 90
+    assert reloaded.tts_cfg.cache_retention == 90 * duration.DAY
 
 
 def test_an_unreadable_setting_falls_back_rather_than_stopping_the_pod(
@@ -374,7 +378,7 @@ def test_an_unreadable_setting_falls_back_rather_than_stopping_the_pod(
 ) -> None:
     """The same file decides which servers are joined; a typo must not cost that."""
     reloaded = _reload_with_setting(
-        monkeypatch, tmp_path, "quotes", "backoff_seconds", "'not a number'"
+        monkeypatch, tmp_path, "quotes", "backoff", "'not a number'"
     )
 
     assert reloaded.quotes_cfg.backoff_seconds == 300.0
@@ -413,22 +417,22 @@ def test_the_completion_budget_and_the_summary_retention_are_settings(
         monkeypatch,
         tmp_path,
         "settings:\n"
-        "  llm:\n    timeout_seconds: 45\n    max_output_tokens: 256\n"
-        "  summaries:\n    retention_days: 365\n",
+        "  llm:\n    timeout: 45s\n    max_output_tokens: 256\n"
+        "  summaries:\n    retention: 365d\n",
     )
 
     assert reloaded.llm_cfg.timeout_seconds == 45.0
     assert reloaded.llm_cfg.max_output_tokens == 256
     assert reloaded.llm_cfg.temperature == 0.7
-    assert reloaded.summary_cfg.retention_days == 365
+    assert reloaded.summary_cfg.retention == 365 * duration.DAY
     assert reloaded.summary_cfg.retention_enabled
 
 
 def test_summaries_are_kept_forever_unless_a_window_is_set(monkeypatch, tmp_path) -> None:
-    """Any value below 1 keeps them, so a mis-set setting cannot destroy the archive."""
+    """Nothing at all keeps them, so a mis-set setting cannot destroy the archive."""
     reloaded = _reload_without_settings(monkeypatch, tmp_path)
 
-    assert reloaded.summary_cfg.retention_days == -1
+    assert reloaded.summary_cfg.retention == duration.NEVER
     assert not reloaded.summary_cfg.retention_enabled
 
 
