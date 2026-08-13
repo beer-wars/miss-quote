@@ -5,15 +5,15 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
-from discord.ext import commands
 
 import miss_quote.bot.client as client_module
 import miss_quote.transcript.writer as writer_module
 from miss_quote.bot import settings
-from miss_quote.bot.client import SETTINGS_COMMAND
+from miss_quote.bot.client import COMMAND_NAME
 from miss_quote.bot.presence import DiscordPresence
 from miss_quote.config import FileConfig, ServerConfig, ToolSettings, transcript_cfg
 from miss_quote.tools.base import Tool
+from miss_quote.tools.registry import TOOLS
 from miss_quote.tools.runner import ToolRunner
 from miss_quote.transcript.schedule import ALWAYS, Schedule
 from miss_quote.transcript.writer import TranscriptWriter
@@ -100,6 +100,9 @@ class FakeVoiceClient:
     def stop_listening(self) -> None:
         self.listening = False
 
+    async def move_to(self, channel) -> None:
+        self.channel = channel
+
     async def disconnect(self) -> None:
         return None
 
@@ -123,13 +126,19 @@ class FakeContext:
         voice_client=None,
         administrator: bool = True,
         guild_id: int = SERVER,
+        author_in: FakeChannel | None = None,
     ) -> None:
         self.voice_client = voice_client
         self.guild = type("Guild", (), {"id": guild_id, "name": "Somewhere"})()
         self.permissions = type("Permissions", (), {"administrator": administrator})()
+        self.author = type(
+            "Member",
+            (),
+            {"voice": type("VoiceState", (), {"channel": author_in})() if author_in else None},
+        )()
         self.sent = []
         self.prefix = "!"
-        self.invoked_with = SETTINGS_COMMAND
+        self.invoked_with = COMMAND_NAME
 
     async def send(self, message: str) -> None:
         self.sent.append(message)
@@ -345,7 +354,7 @@ def _command(bot, name: str):
 
 async def _transcribing(bot, ctx, said: str | None = None):
     """`!mq transcribing [on|off]`, as the callback sees it."""
-    await _command(bot, SETTINGS_COMMAND).callback(
+    await _command(bot, COMMAND_NAME).callback(
         ctx, settings.TRANSCRIBING, said=said
     )
 
@@ -446,54 +455,145 @@ async def test_a_server_that_is_not_known_is_refused(make_bot):
     bot = make_bot()
     ctx = FakeContext(guild_id=SERVER + 1)
 
-    await _command(bot, SETTINGS_COMMAND).callback(ctx)
+    await _command(bot, COMMAND_NAME).callback(ctx)
 
     assert ctx.sent == [client_module.NOT_A_KNOWN_SERVER]
 
 
-async def test_the_command_needs_administrator(make_bot):
-    """What it decides is what the room is doing and who is on the record."""
+async def test_the_settings_need_administrator(make_bot):
+    """What they decide is what the room is doing and who is on the record."""
     bot = make_bot()
-    checks = _command(bot, SETTINGS_COMMAND).checks
+    ctx = FakeContext(administrator=False)
 
-    assert checks
+    await _settings(bot, ctx)
 
-    with pytest.raises(commands.MissingPermissions):
-        for check in checks:
-            check(FakeContext(administrator=False))
+    assert ctx.sent == [client_module.NEEDS_ADMINISTRATOR]
 
 
-async def test_an_administrator_passes_the_check(make_bot):
-    bot = make_bot()
+async def test_changing_a_tool_needs_administrator(make_bot):
+    """The refusal is the same one whether they were reading or writing."""
+    bot = _with_listening(make_bot)
+    ctx = FakeContext(administrator=False)
 
-    assert all(check(FakeContext()) for check in _command(bot, SETTINGS_COMMAND).checks)
+    await _settings(bot, ctx, Listening.name, settings.OFF)
+
+    assert ctx.sent == [client_module.NEEDS_ADMINISTRATOR]
+    assert _running(bot) == {Listening.name}
 
 
 async def test_the_long_name_reaches_the_same_command(make_bot):
     """`!miss-quote` for anybody who would rather write it out."""
     bot = make_bot()
 
-    assert _command(bot, client_module.SETTINGS_ALIAS) is _command(
-        bot, SETTINGS_COMMAND
+    assert _command(bot, client_module.COMMAND_ALIAS) is _command(
+        bot, COMMAND_NAME
     )
 
 
-async def test_a_refusal_is_said_out_loud(make_bot):
-    """A command that does nothing and says nothing is one somebody keeps trying."""
+# ── coming and going ──────────────────────────────
+
+
+async def _voice(bot, ctx, verb: str):
+    """`!mq join` or `!mq leave`, as the callback sees it."""
+    await _command(bot, COMMAND_NAME).callback(ctx, verb)
+
+
+async def test_join_connects_to_the_channel_the_asker_is_in(make_bot):
     bot = make_bot()
-    ctx = FakeContext(administrator=False)
+    channel = FakeChannel()
+    ctx = FakeContext(author_in=channel)
 
-    await bot._refuse_without_permission(ctx, commands.MissingPermissions(["administrator"]))
+    await _voice(bot, ctx, client_module.JOIN_VERB)
 
-    assert "Administrator" in ctx.sent[0]
+    assert channel.voice_client.is_listening()
+    assert CHANNEL_ID in bot._sessions
+    assert str(channel) in ctx.sent[0]
 
 
-async def test_anything_else_is_re_raised(make_bot):
-    """A real failure should still reach the log it would have reached."""
+async def test_join_says_so_when_the_asker_is_in_no_channel(make_bot):
+    """There is no channel to be asked into, and no reasonable one to guess."""
     bot = make_bot()
+    ctx = FakeContext()
 
-    with pytest.raises(RuntimeError):
-        await bot._refuse_without_permission(FakeContext(), RuntimeError("something else"))
+    await _voice(bot, ctx, client_module.JOIN_VERB)
+
+    assert bot._sessions == {}
+    assert "You are not in a voice channel" in ctx.sent[0]
+
+
+async def test_join_moves_when_it_is_already_sitting_somewhere_else(make_bot):
+    """One connection per server, so a second channel is a leave and a join."""
+    bot = make_bot()
+    first = FakeChannel()
+    await bot._connect(first)
+
+    second = FakeChannel(channel_id=CHANNEL_ID + 1, name="other-voice")
+    ctx = FakeContext(voice_client=first.voice_client, author_in=second)
+    await _voice(bot, ctx, client_module.JOIN_VERB)
+
+    assert CHANNEL_ID not in bot._sessions
+    assert CHANNEL_ID + 1 in bot._sessions
+
+
+async def test_leave_closes_the_session_it_was_writing(make_bot):
+    bot = make_bot()
+    channel = FakeChannel()
+    await bot._connect(channel)
+
+    ctx = FakeContext(voice_client=channel.voice_client)
+    await _voice(bot, ctx, client_module.LEAVE_VERB)
+
+    assert bot._sessions == {}
+    assert not channel.voice_client.is_listening()
+    assert ctx.sent
+
+
+async def test_leave_says_so_when_it_is_in_no_channel(make_bot):
+    bot = make_bot()
+    ctx = FakeContext(voice_client=None)
+
+    await _voice(bot, ctx, client_module.LEAVE_VERB)
+
+    assert ctx.sent == [client_module.NOT_IN_A_CHANNEL]
+
+
+@pytest.mark.parametrize("verb", client_module.VOICE_VERBS)
+async def test_coming_and_going_needs_no_permission(make_bot, verb):
+    """A room with autojoin off has no other way to be heard at all."""
+    bot = make_bot()
+    ctx = FakeContext(administrator=False, author_in=FakeChannel())
+
+    await _voice(bot, ctx, verb)
+
+    assert client_module.NEEDS_ADMINISTRATOR not in ctx.sent
+
+
+@pytest.mark.parametrize("verb", client_module.VOICE_VERBS)
+async def test_a_verb_is_read_however_it_was_typed(make_bot, verb):
+    bot = make_bot()
+    ctx = FakeContext(author_in=FakeChannel())
+
+    await _voice(bot, ctx, f"  {verb.upper()}  ")
+
+    assert ctx.sent
+    assert "no tool named" not in ctx.sent[0]
+
+
+@pytest.mark.parametrize("verb", client_module.VOICE_VERBS)
+async def test_a_verb_on_an_unknown_server_is_refused(make_bot, verb):
+    """The same gate a configured server's autojoin goes through."""
+    bot = make_bot()
+    ctx = FakeContext(guild_id=SERVER + 1, author_in=FakeChannel())
+
+    await _voice(bot, ctx, verb)
+
+    assert ctx.sent == [client_module.NOT_A_KNOWN_SERVER]
+
+
+@pytest.mark.parametrize("verb", client_module.VOICE_VERBS)
+def test_no_tool_is_named_after_a_verb(verb):
+    """A tool called `join` would be unreachable from the command that switches it."""
+    assert verb not in TOOLS
 
 
 # ── the tools a server is running ─────────────────
@@ -517,7 +617,7 @@ def _running(bot):
 
 
 async def _settings(bot, ctx, path: str | None = None, said: str | None = None):
-    await _command(bot, SETTINGS_COMMAND).callback(ctx, path, said=said)
+    await _command(bot, COMMAND_NAME).callback(ctx, path, said=said)
 
 
 def _with_listening(make_bot, enabled: bool = True):

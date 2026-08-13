@@ -76,7 +76,7 @@ Everything about a server lives under its ID, and the ID appears there and nowhe
 | `users` | no | Replaces the display name Discord reports for a speaker |
 | `tools` | no | Elects the server into the tools listed under it |
 
-**`servers` is a hard gate on joining.** A server that is not listed is never joined, by autojoin or by an explicit `!join`, and an empty mapping or a missing file means the bot joins nothing at all.
+**`servers` is a hard gate on joining.** A server that is not listed is never joined, by autojoin or by an explicit `!mq join`, and an empty mapping or a missing file means the bot joins nothing at all.
 
 <details class="why" markdown="1">
 <summary>Why the gate fails closed</summary>
@@ -122,17 +122,21 @@ Everything in this block is what the server **starts** as. `!mq` changes what it
 
 ## Switching things on and off {#switching}
 
-`!mq` reads and changes what one server is doing right now. `!miss-quote` is the same command written out. **It requires Administrator on the server**, and it refuses any server not listed under `servers`.
+`!mq` is everything typed at the bot: where it sits, and what one server is doing right now. `!miss-quote` is the same command written out. It refuses any server not listed under `servers`.
 
-| Command | Effect |
-|---|---|
-| `!mq` | Lists every tool, whether it is on, and whether that is still what the file says. The record is listed with them |
-| `!mq quotes` | Says whether one tool is on |
-| `!mq quotes off` | Switches a tool off. `off`, `false`, `no` and `0` all mean this |
-| `!mq quotes on` | Switches a tool on. `on`, `true`, `yes` and `1` all mean this |
-| `!mq quotes.backoff_seconds` | Says what one of a tool's own settings was built against |
-| `!mq quotes.backoff_seconds 600` | Sets it, and rebuilds the tool around it |
-| `!mq transcribing on` | Puts the open session on the record — see [starting and stopping by hand]({{ '/about/#starting-and-stopping-by-hand' | relative_url }}) |
+**Reading or changing what a server is doing requires Administrator.** Coming and going does not — a room with `AUTOJOIN` off has no other way to be heard at all.
+
+| Command | Effect | Needs |
+|---|---|---|
+| `!mq join` | Joins the voice channel **you** are in and starts listening. Moves, if it is already sitting in another one | anybody |
+| `!mq leave` | Leaves the channel it is in, sealing the transcript it was writing | anybody |
+| `!mq` | Lists every tool, whether it is on, and whether that is still what the file says. The record is listed with them | Administrator |
+| `!mq quotes` | Says whether one tool is on | Administrator |
+| `!mq quotes off` | Switches a tool off. `off`, `false`, `no` and `0` all mean this | Administrator |
+| `!mq quotes on` | Switches a tool on. `on`, `true`, `yes` and `1` all mean this | Administrator |
+| `!mq quotes.backoff_seconds` | Says what one of a tool's own settings was built against | Administrator |
+| `!mq quotes.backoff_seconds 600` | Sets it, and rebuilds the tool around it | Administrator |
+| `!mq transcribing on` | Puts the open session on the record — see [starting and stopping by hand]({{ '/about/#starting-and-stopping-by-hand' | relative_url }}) | Administrator |
 
 **Nothing here is written down.** A restart goes back to `config.yaml`, which is why `!mq` lists what the file says beside anything that no longer matches it:
 
@@ -1075,10 +1079,10 @@ What a deployment points at, rather than how it behaves. `.env` is loaded if pre
 | Variable | Default | Purpose |
 |---|---|---|
 | `DISCORD_TOKEN` | — | Bot token. **Required** — the bot exits immediately without it |
-| `COMMAND_PREFIX` | `!` | Prefix for the `!join` / `!leave` commands |
+| `COMMAND_PREFIX` | `!` | Prefix for the `!mq` commands |
 | `AUTOJOIN` | `true` | Join when a human enters a voice channel; leave when it empties. Accepts `true/false`, `1/0`, `yes/no`, `on/off` |
 
-With `AUTOJOIN` enabled the bot connects as soon as a non-bot member enters a voice channel and disconnects once it empties of humans. A bot can occupy only one voice channel per guild, so a second channel becoming active does not make it hop — which would fragment both transcripts. `!join` and `!leave` remain available either way, and require **Message Content Intent** in the Discord Developer Portal.
+With `AUTOJOIN` enabled the bot connects as soon as a non-bot member enters a voice channel and disconnects once it empties of humans. A bot can occupy only one voice channel per guild, so a second channel becoming active does not make it hop — which would fragment both transcripts. `!mq join` and `!mq leave` remain available either way, and require **Message Content Intent** in the Discord Developer Portal.
 
 ### ASR {#env-asr}
 

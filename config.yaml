@@ -268,7 +268,7 @@ settings:
 #
 # The ID appears here and nowhere else: transcript directories are named for the
 # alias, so renaming a server on Discord changes nothing. A server that is not
-# listed is never joined, by autojoin or by an explicit !join, and an empty
+# listed is never joined, by autojoin or by an explicit !mq join, and an empty
 # mapping means the bot joins nothing: recording a server it should not have is
 # not something you can take back.
 #

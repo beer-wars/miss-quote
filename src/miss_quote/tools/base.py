@@ -111,7 +111,7 @@ class Speaker(Protocol):
 
         Asked rather than remembered, and that is the point of it being here. A
         tool is told when the bot joins a channel and never when it leaves, so
-        anything keeping its own flag is wrong from the first `!leave` onwards.
+        anything keeping its own flag is wrong from the first `!mq leave` onwards.
 
         The server rather than the channel. A bot that moved between rooms is
         still somewhere worth having speech ready for, and this is not the check
