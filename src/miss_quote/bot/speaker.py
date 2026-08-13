@@ -248,6 +248,26 @@ class DiscordSpeaker:
 
             await self._play(voice_client, audio, volume)
 
+    def connected(self, source: Source) -> bool:
+        """
+        Whether the bot is in a voice channel on that server.
+
+        The connection and nothing past it. Where a clip may go is a narrower
+        question that `_voice_client_for` asks on its own terms — the room it
+        came from, and nothing already playing — and a tool asking this one is
+        deciding whether to prepare rather than where to send.
+        """
+        return self._connection_for(source) is not None
+
+    def _connection_for(self, source: Source) -> discord.VoiceClient | None:
+        """The voice connection to a server, if there is one up."""
+        voice_client = getattr(self._guilds(source.guild_id), "voice_client", None)
+
+        if voice_client is None or not voice_client.is_connected():
+            return None
+
+        return voice_client
+
     def _lock_for(self, guild_id: int) -> asyncio.Lock:
         lock = self._locks.get(guild_id)
         if lock is None:
@@ -264,10 +284,9 @@ class DiscordSpeaker:
         before that, so by the time it is ready the bot may have moved or left.
         Playing it into wherever the bot ended up would be worse than silence.
         """
-        guild = self._guilds(source.guild_id)
-        voice_client = getattr(guild, "voice_client", None)
+        voice_client = self._connection_for(source)
 
-        if voice_client is None or not voice_client.is_connected():
+        if voice_client is None:
             logger.debug("Not connected to %s; dropping a clip.", source.guild_alias)
             return None
 
